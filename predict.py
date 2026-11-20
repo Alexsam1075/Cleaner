@@ -5,8 +5,9 @@ import sys
 from pathlib import Path
 
 if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    __package__ = "astramis_model"
+    project_dir = Path(__file__).resolve().parent
+    sys.path.insert(0, str(project_dir.parent))
+    __package__ = project_dir.name
 
 from .datasets.common import PROJECT_ROOT, resolve_data_root
 from .inference.predictor import predict_ids, sample_submission_ids
