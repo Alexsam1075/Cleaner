@@ -55,7 +55,7 @@ At the time of this initial implementation entry, no model result was available.
 
 - The initial source commit was `1c15ee5` (`Initial Astramis RGB-D model package`). The user then created the private repository `Alexsam1075/Cleaner`; its original README commit was preserved in the resulting history, with no force-push.
 - `origin` is `git@github.com:Alexsam1075/Cleaner.git`. The source and docs were pushed to `main`; the latest source revision at the time of training was `3ecf9ef` (`Fix entrypoint package bootstrap`).
-- The raw dataset, transfer archives, checkpoints, logs, visualizations, and submissions are excluded from Git. All 3,604 raw dataset files and training artifacts remain on AION Lab; the shared `cleaner` account retains read/write access to the project and `.git`.
+- The raw dataset, transfer archives, checkpoints, logs, visualizations, and submissions are excluded from Git. The 3,604 raw files, checkpoints, and training logs remain on AION Lab; copies of the experiment report, submission, and 24 test overlays are also in the Windows workspace. The shared `cleaner` account retains read/write access to the project and `.git`.
 
 ## 2026-11-20 - AION Lab training and validation
 
