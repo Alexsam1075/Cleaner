@@ -69,6 +69,7 @@ At the time of this initial implementation entry, no model result was available.
 - Trained A (real only), B (synthetic pretraining then real fine-tuning), C (joint real and filtered synthetic), and D (joint with domain randomization), using seed 0 and a fixed split grouped by physical `object_id`.
 - Trained RGB-only, late-fusion, intermediate RGB-D, and intermediate RGB-D plus geometry attribute heads on the C training split. All detector and attribute checkpoints were saved under `checkpoints/experiments/` on AION Lab.
 - Evaluated all conditions through the supplied, unchanged `score.py`. The fixed held-out fold contains 10 physical IDs, 67 real frames, and 57 annotated objects. Synthetic frames containing validation IDs were excluded from training. No test labels were used.
+- Expanded the data audit in `reports/experiment_report.md`: all 40 IDs overlap between real and synth with matching labels; no malformed train annotations or missing required files were found. The report records class counts, volume/mass quartiles and outliers, camera/floor-plane metadata, and depth validity coverage from a 30-map-per-split sample.
 
 | Data strategy | D (mAP50) | M | V | S (`take`) | Score |
 | --- | ---: | ---: | ---: | ---: | ---: |

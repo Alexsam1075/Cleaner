@@ -2,6 +2,50 @@
 
 Metrics are computed by the supplied, unchanged `score.py` on the fixed validation frames grouped by physical `object_id`. No test annotations are used.
 
+## Data audit
+
+The remote data audit read only `real_train.json` and `synth_train.json`; no test-label file was opened. Both train sets contain the same 40 physical IDs, and form, material, volume, and mass agree for every shared ID.
+
+| Label count | Real annotations | Synthetic annotations |
+| --- | ---: | ---: |
+| Frames | 263 | 600 |
+| Object annotations | 214 | 678 |
+| Empty frames | 49 | 0 |
+| Form: bulk / solid | 98 / 116 | 236 / 442 |
+| Material: plastic | 78 | 279 |
+| Material: paper | 28 | 87 |
+| Material: metal | 38 | 83 |
+| Material: glass | 20 | 52 |
+| Material: wood | 35 | 89 |
+| Material: mineral | 15 | 88 |
+
+Unique-ID counts are 14 bulk and 26 solid; material counts are plastic 17, paper 5, metal 5, wood 5, mineral 5, glass 3. Every object ID occurs in both real and synthetic data; matching attributes show that synthetic data are object-linked copies, so validation IDs must be filtered from synth training.
+
+Volume and mass quartiles use linear interpolation; outliers use Tukey's 1.5×IQR rule. Annotation-level values repeat objects across frames, so the unique-ID view is less frame-biased.
+
+| Data | Measure | Min–max | Q1 / median / Q3 | IQR | Outliers |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Real annotations | Volume (ml) | 12–5,200 | 90 / 300 / 1,000 | 910 | 8 |
+| Real annotations | Mass (g) | 5–1,000 | 60 / 150 / 370 | 310 | 19 |
+| Synthetic annotations | Volume (ml) | 12–5,200 | 90 / 300 / 800 | 710 | 31 |
+| Synthetic annotations | Mass (g) | 5–1,000 | 35 / 140 / 350 | 315 | 51 |
+| Unique physical IDs | Volume (ml) | 12–5,200 | 90 / 300 / 800 | 710 | 2 |
+| Unique physical IDs | Mass (g) | 5–1,000 | 46.25 / 145 / 355 | 308.75 | 3 |
+
+All required files are present: real train 263 frame folders / 789 files, real test 137 / 411, and synthetic train 600 / 2,400. No missing attributes, invalid numeric labels, bad boxes, malformed or out-of-frame polygons, unknown classes, dangling image references, or conflicting per-ID labels were found. The label directory lists only the two train JSON files. `densities.csv` has 11 valid rows covering 40 objects.
+
+All 2,600 color/depth/mask PNG headers are 1280×720 and use the expected types: RGB color, 16-bit grayscale depth, and 8-bit grayscale synthetic masks. No required PNGs are missing or have malformed headers. `camera.json` describes a RealSense D435 at 1280×720 with depth in millimeters aligned to color. All 1,000 metadata files have a valid normalized floor plane. The three floor-plane groups correspond to heights/tilts of 0.2514 m/27.42°, 0.2532 m/31.47°, and 0.2516 m/32.78°.
+
+Depth pixels were decoded for a deterministic 30-frame sample from each split; these coverage statistics are not a full-set pixel scan.
+
+| Split | Zero-pixel share: min / Q1 / median / Q3 / max | Median positive-depth coverage |
+| --- | ---: | ---: |
+| Real train | 5.70 / 7.27 / 9.34 / 10.38 / 12.14% | 90.66% |
+| Real test | 5.87 / 7.38 / 8.60 / 11.31 / 13.40% | 91.40% |
+| Synthetic train | 5.94 / 7.30 / 10.47 / 11.62 / 14.48% | 89.53% |
+
+All 90 sampled maps decoded as 720×1280 `uint16`; none were all-zero. On sampled real frames, `meta.holes_share` matched the measured zero share within 0.0001. Sparse values above 10,000 mm and up to 65,535 mm occur; without a sensor-code specification they are not classified here as invalid. The geometry feature code currently accepts depth from 50 to below 8,000 mm and excludes out-of-range samples from geometry features.
+
 ## Validation split
 
 - Seed 0, fold 1: 10 held-out physical IDs and 67 real frames (57 annotated objects).
