@@ -54,6 +54,6 @@ No model result is claimed yet. AION Lab package setup, training, official valid
 ## 2026-11-20 - Private repository bootstrap
 
 - Initialized branch `main` at `/home/alexsandrdev/Projects/Cleaner` and committed 40 source, config, reference, and documentation files as `1c15ee5` (`Initial Astramis RGB-D model package`). Commit author is the authenticated GitHub account `Alexsam1075`.
-- The raw dataset and both transfer archives are ignored by Git. All 3,604 raw files remain on AION Lab. Group write access on `.git` lets the shared `cleaner` account use the repository.
+- The raw dataset and both transfer archives are ignored by Git. All 3,604 raw files remain on AION Lab. The shared `cleaner` account has explicit read/write ACLs on `.git` plus a `safe.directory` entry; its repository access was verified.
 - Set `origin` to `git@github.com:Alexsam1075/Cleaner.git`. The server SSH key authenticates as `Alexsam1075`, but GitHub reports that repository as not found. No GitHub API session or connected GitHub integration is available to create it, so the private online repository has not yet been created or pushed.
 
