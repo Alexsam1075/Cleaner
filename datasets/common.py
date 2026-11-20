@@ -20,7 +20,7 @@ def resolve_data_root(value: str | Path | None = None) -> Path:
             return root.resolve()
     raise FileNotFoundError(
         "Astramis data not found. Pass --data-root or place it under "
-        "astramis_model/datasets/raw."
+        "<project>/datasets/raw."
     )
 
 

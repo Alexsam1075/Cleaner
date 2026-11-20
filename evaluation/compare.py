@@ -6,8 +6,9 @@ import sys
 from pathlib import Path
 
 if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-    __package__ = "astramis_model.evaluation"
+    project_dir = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(project_dir.parent))
+    __package__ = f"{project_dir.name}.evaluation"
 
 from ..datasets.common import PROJECT_ROOT
 

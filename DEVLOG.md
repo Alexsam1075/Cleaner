@@ -26,7 +26,7 @@
 
 ### Results
 
-No model result is claimed yet. AION Lab package setup, training, official validation, and test submission generation are pending.
+At the time of this initial implementation entry, no model result was available. AION Lab training, official-score validation, and test submission results are recorded below.
 
 ### Limitations to carry forward
 
@@ -53,7 +53,45 @@ No model result is claimed yet. AION Lab package setup, training, official valid
 
 ## 2026-11-20 - Private repository bootstrap
 
-- Initialized branch `main` at `/home/alexsandrdev/Projects/Cleaner` and committed 40 source, config, reference, and documentation files as `1c15ee5` (`Initial Astramis RGB-D model package`). Commit author is the authenticated GitHub account `Alexsam1075`.
-- The raw dataset and both transfer archives are ignored by Git. All 3,604 raw files remain on AION Lab. The shared `cleaner` account has explicit read/write ACLs on `.git` plus a `safe.directory` entry; its repository access was verified.
-- Set `origin` to `git@github.com:Alexsam1075/Cleaner.git`. The server SSH key authenticates as `Alexsam1075`, but GitHub reports that repository as not found. No GitHub API session or connected GitHub integration is available to create it, so the private online repository has not yet been created or pushed.
+- The initial source commit was `1c15ee5` (`Initial Astramis RGB-D model package`). The user then created the private repository `Alexsam1075/Cleaner`; its original README commit was preserved in the resulting history, with no force-push.
+- `origin` is `git@github.com:Alexsam1075/Cleaner.git`. The source and docs were pushed to `main`; the latest source revision at the time of training was `3ecf9ef` (`Fix entrypoint package bootstrap`).
+- The raw dataset, transfer archives, checkpoints, logs, visualizations, and submissions are excluded from Git. All 3,604 raw dataset files and training artifacts remain on AION Lab; the shared `cleaner` account retains read/write access to the project and `.git`.
+
+## 2026-11-20 - AION Lab training and validation
+
+### Before
+
+- The RGB-D model package and experiment configs existed, but no weights, official-score results, or test submission had been produced.
+- Validation was not yet measured for real-only, synthetic-pretrained, joint, domain-randomized, or fusion-ablation variants.
+
+### After
+
+- Trained A (real only), B (synthetic pretraining then real fine-tuning), C (joint real and filtered synthetic), and D (joint with domain randomization), using seed 0 and a fixed split grouped by physical `object_id`.
+- Trained RGB-only, late-fusion, intermediate RGB-D, and intermediate RGB-D plus geometry attribute heads on the C training split. All detector and attribute checkpoints were saved under `checkpoints/experiments/` on AION Lab.
+- Evaluated all conditions through the supplied, unchanged `score.py`. The fixed held-out fold contains 10 physical IDs, 67 real frames, and 57 annotated objects. Synthetic frames containing validation IDs were excluded from training. No test labels were used.
+
+| Data strategy | D (mAP50) | M | V | S (`take`) | Score |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| A — real only | 0.9562 | 0.4750 | 0.5081 | 0.5000 | 67.948 |
+| B — synthetic then real | 0.9552 | 0.6167 | 0.5105 | 0.3646 | 68.774 |
+| C — joint | 0.9344 | 0.6100 | 0.5379 | 0.3542 | 68.337 |
+| D — domain randomized | 0.9696 | 0.5625 | 0.5513 | 0.3542 | 69.130 |
+
+| C fusion head | D (mAP50) | M | V | S (`take`) | Score |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| RGB only | 0.9714 | 0.7067 | 0.3040 | 0.4062 | 66.685 |
+| Late RGB-D | 0.9714 | 0.5700 | 0.4943 | 0.3750 | 68.241 |
+| Intermediate RGB-D | 0.9714 | 0.5833 | 0.3356 | 0.4062 | 65.007 |
+| Intermediate RGB-D plus geometry | 0.9344 | 0.6100 | 0.5379 | 0.3542 | 68.337 |
+
+- D had the highest observed strategy Score on this fold. B exceeded A by 0.826 points; that is an encouraging synthetic-data signal on this split, not proof of generalization. For fusion, intermediate RGB-D plus geometry and late fusion were nearly tied; RGB-only raised material accuracy while reducing volume accuracy.
+- Training-fit geometric volume calibration did not improve the C baseline comparator on this fold: Score 64.808 versus 64.861 before calibration. The fitted value is retained as a comparison, not claimed as an improvement.
+- Generated `submissions/submission.csv` with D weights. It has 137 data rows, matching the 137 IDs in `sample_submission.csv`. Saved 24 test-frame overlays under `visualizations/test/`; the C validation run also saved overlays for inspection.
+- The full per-condition results and error breakdowns are in `reports/experiment_report.md` and `logs/validation/`. Training logs and checkpoints remain on AION Lab and are not committed.
+
+### Limits and next work
+
+- This is one grouped fold with only 10 held-out physical IDs; the highest Score is a model-selection result, not a stable estimate. More physical objects and grouped cross-validation are needed before deployment claims.
+- The best observed model has S=0.3542, so `take` remains a weak area. The visible-depth volume estimate cannot recover hidden surfaces, and mass error is supplementary because the scorer evaluates `take`, not mass directly.
+- Keep D as the current submission candidate, but compare it on additional object-ID folds and inspect take errors by mass range before allowing autonomous pickup decisions.
 
