@@ -43,11 +43,17 @@ No model result is claimed yet. AION Lab package setup, training, official valid
 - Health check: public-key SSH login succeeded; the account could create and remove a file in `Cleaner`; listing `/home/alexsandrdev/Projects` was denied as intended. The supplied `alexsandrdev` SSH profile and `sshd_config` were not changed.
 - A separate shared-account key was installed. Its private part is kept outside the project in the Windows user's `.ssh` directory; no credential material is recorded here.
 - The dataset archive upload was still in progress at the last check (about 844 MB). Its contents and file permissions were not changed during transfer.
-- Revision: this workspace has no Git metadata, so the server access change has no commit hash.
+- Revision: the Windows source workspace had no Git metadata when the shared account was configured; the AION Lab repository was initialized later under the remote `Cleaner` path.
 
 ## 2026-11-20 - AION Lab archive extraction
 
 - Verified the uploaded code archive (`070b3194448ccf4643ead973829387804e8a5f546aee32ef4b8de2b420c3175f`) and dataset archive (`2d071609b68192261d401fdf5c68ead00062e60a781255cd7d9d04b54e32ae3c`) against the local copies.
 - Extracted the project source into `/home/alexsandrdev/Projects/Cleaner` and the dataset into `datasets/raw`; the extracted dataset contains 3,604 files.
 - Kept the transfer archives on AION Lab. The existing `.gitignore` excludes both `*.tar.gz` and `datasets/raw/`, so the source repository can remain small while the full data stays on the server.
+
+## 2026-11-20 - Private repository bootstrap
+
+- Initialized branch `main` at `/home/alexsandrdev/Projects/Cleaner` and committed 40 source, config, reference, and documentation files as `1c15ee5` (`Initial Astramis RGB-D model package`). Commit author is the authenticated GitHub account `Alexsam1075`.
+- The raw dataset and both transfer archives are ignored by Git. All 3,604 raw files remain on AION Lab. Group write access on `.git` lets the shared `cleaner` account use the repository.
+- Set `origin` to `git@github.com:Alexsam1075/Cleaner.git`. The server SSH key authenticates as `Alexsam1075`, but GitHub reports that repository as not found. No GitHub API session or connected GitHub integration is available to create it, so the private online repository has not yet been created or pushed.
 
