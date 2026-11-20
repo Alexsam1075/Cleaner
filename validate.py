@@ -49,7 +49,15 @@ def main() -> None:
     split_path = output / "configs" / "object_id_split.json"
     if not split_path.is_file():
         split_path = output / "logs" / "object_id_split.json"
-    split = load_or_create_split(data_root, split_path)
+    if not split_path.is_file():
+        raise FileNotFoundError(f"Training split is missing: {split_path}")
+    split = json.loads(split_path.read_text(encoding="utf-8"))
+    required = {"seed", "group_folds", "validation_fold", "train_object_ids",
+                "validation_object_ids", "validation_real_frames"}
+    if not required.issubset(split):
+        raise ValueError(f"Incomplete training split: {split_path}")
+    if set(split["train_object_ids"]) & set(split["validation_object_ids"]):
+        raise ValueError(f"Object IDs overlap in training split: {split_path}")
     val_ids = split["validation_real_frames"]
     if args.detector:
         detector_path = Path(args.detector).resolve()
