@@ -1,0 +1,14 @@
+{
+  "name": "D_domain_randomized",
+  "detector_strategy": "joint_domain_randomized",
+  "attribute_strategy": "joint",
+  "domain_randomized": true,
+  "detector_epochs": 18,
+  "attribute_epochs": 28,
+  "detector_batch": 8,
+  "attribute_batch": 32,
+  "fusion": "intermediate_geom",
+  "seed": 0,
+  "group_folds": 4,
+  "validation_fold": 1
+}

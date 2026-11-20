@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+datasets/raw/
+datasets/yolo/
+checkpoints/*
+logs/*
+visualizations/
+submissions/
+*.pt
+*.tar.gz
+.env
+.env.*
+*.key
+*.pem
+.ssh/

@@ -1,0 +1,14 @@
+{
+  "name": "A_real",
+  "detector_strategy": "real_only",
+  "attribute_strategy": "real_only",
+  "domain_randomized": false,
+  "detector_epochs": 18,
+  "attribute_epochs": 28,
+  "detector_batch": 8,
+  "attribute_batch": 32,
+  "fusion": "intermediate_geom",
+  "seed": 0,
+  "group_folds": 4,
+  "validation_fold": 1
+}

@@ -1,0 +1,30 @@
+{
+  "seed": 0,
+  "device": "0",
+  "validation_fold": 1,
+  "group_folds": 4,
+  "validation_fraction_empty": 0.2,
+  "image_size": 640,
+  "detector_model": "yolo11n-seg.pt",
+  "primary_fusion": "intermediate_geom",
+  "detector_epochs": 18,
+  "detector_batch": 8,
+  "detector_workers": 4,
+  "attribute_epochs": 28,
+  "attribute_batch": 32,
+  "attribute_image_size": 224,
+  "geometry_image_size": 64,
+  "geometry_cell_m": 0.004,
+  "detector_confidence": 0.08,
+  "max_detections": 30,
+  "experiments": ["A_real", "B_synth_then_real", "C_joint", "D_domain_randomized"],
+  "run_fusion_ablation": true,
+  "fusion_variants": ["late", "intermediate"],
+  "material_loss": "weighted_cross_entropy",
+  "regression_loss": "smooth_l1_log",
+  "take_threshold_g": 500.0,
+  "classes": {
+    "forms": ["bulk", "solid"],
+    "materials": ["metal", "wood", "plastic", "glass", "paper", "mineral"]
+  }
+}

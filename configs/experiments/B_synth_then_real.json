@@ -1,0 +1,16 @@
+{
+  "name": "B_synth_then_real",
+  "detector_strategy": "synth_pretrain_real_finetune",
+  "attribute_strategy": "synth_pretrain_real_finetune",
+  "domain_randomized": false,
+  "detector_epochs": 18,
+  "synth_pretrain_epochs": 9,
+  "attribute_epochs": 28,
+  "synth_attribute_pretrain_epochs": 14,
+  "detector_batch": 8,
+  "attribute_batch": 32,
+  "fusion": "intermediate_geom",
+  "seed": 0,
+  "group_folds": 4,
+  "validation_fold": 1
+}

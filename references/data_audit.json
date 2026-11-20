@@ -1,0 +1,366 @@
+{
+  "real_train": {
+    "frames": 263,
+    "objects": 214,
+    "object_ids_unique": 40,
+    "forms": {
+      "bulk": 98,
+      "solid": 116
+    },
+    "materials": {
+      "glass": 20,
+      "metal": 38,
+      "mineral": 15,
+      "paper": 28,
+      "plastic": 78,
+      "wood": 35
+    },
+    "form_material_counts": {
+      "bulk|metal": 31,
+      "bulk|mineral": 7,
+      "bulk|paper": 12,
+      "bulk|plastic": 35,
+      "bulk|wood": 13,
+      "solid|glass": 20,
+      "solid|metal": 7,
+      "solid|mineral": 8,
+      "solid|paper": 16,
+      "solid|plastic": 43,
+      "solid|wood": 22
+    },
+    "volume_ml": {
+      "count": 214,
+      "min": 12.0,
+      "median": 300.0,
+      "max": 5200.0,
+      "q1": 90.0,
+      "q3": 1000.0,
+      "iqr_outliers": 8
+    },
+    "mass_g": {
+      "count": 214,
+      "min": 5.0,
+      "median": 150.0,
+      "max": 1000.0,
+      "q1": 60.0,
+      "q3": 370.0,
+      "iqr_outliers": 19
+    },
+    "take": {
+      "0": 44,
+      "1": 170
+    },
+    "instances_per_frame": {
+      "1": 214
+    },
+    "empty_frames": 49,
+    "image_sizes": {
+      "1280x720": 263
+    },
+    "missing_or_unreadable_images": [],
+    "metadata_dimension_mismatches": [],
+    "missing_required_attributes": 0,
+    "depth_maps_missing": [],
+    "depth_sizes_and_types": {
+      "1280x720:uint16": 263
+    },
+    "depth_zero_share": {
+      "count": 263,
+      "min": 0.05681857638888889,
+      "median": 0.09188259548611111,
+      "max": 0.15767035590277778,
+      "q1": 0.07291395399305556,
+      "q3": 0.10216254340277778,
+      "iqr_outliers": 1
+    },
+    "metadata_missing_floor_plane": [],
+    "meta_holes_share": {
+      "count": 263,
+      "min": 0.0568,
+      "median": 0.0919,
+      "max": 0.1577,
+      "q1": 0.07295,
+      "q3": 0.10214999999999999,
+      "iqr_outliers": 1
+    },
+    "metadata_surface": {
+      "tile": 263
+    },
+    "metadata_lighting": {
+      "bright": 92,
+      "dim": 89,
+      "side": 82
+    },
+    "metadata_time_count": 263,
+    "metadata_synthetic_true_count": 0,
+    "invalid_boxes": [],
+    "invalid_or_out_of_frame_polygons": [],
+    "bbox_polygon_extrema_diff_gt_2px": [],
+    "object_label_conflicts": {}
+  },
+  "synth_train": {
+    "frames": 600,
+    "objects": 678,
+    "object_ids_unique": 40,
+    "forms": {
+      "bulk": 236,
+      "solid": 442
+    },
+    "materials": {
+      "glass": 52,
+      "metal": 83,
+      "mineral": 88,
+      "paper": 87,
+      "plastic": 279,
+      "wood": 89
+    },
+    "form_material_counts": {
+      "bulk|metal": 50,
+      "bulk|mineral": 36,
+      "bulk|paper": 18,
+      "bulk|plastic": 96,
+      "bulk|wood": 36,
+      "solid|glass": 52,
+      "solid|metal": 33,
+      "solid|mineral": 52,
+      "solid|paper": 69,
+      "solid|plastic": 183,
+      "solid|wood": 53
+    },
+    "volume_ml": {
+      "count": 678,
+      "min": 12.0,
+      "median": 300.0,
+      "max": 5200.0,
+      "q1": 90.0,
+      "q3": 800.0,
+      "iqr_outliers": 31
+    },
+    "mass_g": {
+      "count": 678,
+      "min": 5.0,
+      "median": 140.0,
+      "max": 1000.0,
+      "q1": 35.0,
+      "q3": 350.0,
+      "iqr_outliers": 51
+    },
+    "take": {
+      "0": 119,
+      "1": 559
+    },
+    "instances_per_frame": {
+      "1": 522,
+      "2": 78
+    },
+    "empty_frames": 0,
+    "image_sizes": {
+      "1280x720": 600
+    },
+    "missing_or_unreadable_images": [],
+    "metadata_dimension_mismatches": [],
+    "missing_required_attributes": 0,
+    "depth_maps_missing": [],
+    "depth_sizes_and_types": {
+      "1280x720:uint16": 600
+    },
+    "depth_zero_share": {
+      "count": 600,
+      "min": 0.059174262152777775,
+      "median": 0.1007058376736111,
+      "max": 0.16486762152777779,
+      "q1": 0.07499945746527778,
+      "q3": 0.11459906684027778,
+      "iqr_outliers": 0
+    },
+    "metadata_missing_floor_plane": [],
+    "meta_holes_share": {
+      "count": 0,
+      "min": null,
+      "median": null,
+      "max": null,
+      "q1": null,
+      "q3": null,
+      "iqr_outliers": 0
+    },
+    "metadata_surface": {
+      "tile": 600
+    },
+    "metadata_lighting": {
+      "bright": 77,
+      "dim": 292,
+      "side": 231
+    },
+    "metadata_time_count": 0,
+    "metadata_synthetic_true_count": 600,
+    "invalid_boxes": [],
+    "invalid_or_out_of_frame_polygons": [],
+    "bbox_polygon_extrema_diff_gt_2px": [
+      206,
+      512,
+      582
+    ],
+    "object_label_conflicts": {}
+  },
+  "real_test": {
+    "frames": 137,
+    "sample_submission_rows": 137,
+    "sample_ids_unique": true,
+    "test_ids_match_sample_submission": true,
+    "missing_rgb_depth_or_meta": [],
+    "meta_missing_floor_plane": [],
+    "depth_map_shapes_and_types": {
+      "1280x720:uint16": 137
+    },
+    "depth_zero_share": {
+      "count": 137,
+      "min": 0.05734809027777778,
+      "median": 0.0880837673611111,
+      "max": 0.18146918402777779,
+      "q1": 0.07423177083333334,
+      "q3": 0.10663519965277778,
+      "iqr_outliers": 1
+    },
+    "label_source": "No real_test labels file found; test meta is sensor/context only."
+  },
+  "camera": {
+    "model": "RealSense D435",
+    "width": 1280,
+    "height": 720,
+    "fx": 911.6585693359375,
+    "fy": 909.689697265625,
+    "cx": 632.4738159179688,
+    "cy": 345.352783203125,
+    "depth_unit": "mm",
+    "depth_aligned_to": "color",
+    "sessions": [
+      {
+        "from_frame": "r_0001",
+        "floor_plane": [
+          -0.002392542193282726,
+          -0.8876295939720227,
+          -0.4605518208051247,
+          0.2514167226874536
+        ],
+        "floor_height_m": 0.2514,
+        "tilt_deg": 27.42
+      },
+      {
+        "from_frame": "r_0246",
+        "floor_plane": [
+          -0.022010287180019406,
+          -0.8526611954046954,
+          -0.5220004148554757,
+          0.253208849395869
+        ],
+        "floor_height_m": 0.2532,
+        "tilt_deg": 31.47
+      },
+      {
+        "from_frame": "r_0375",
+        "floor_plane": [
+          -0.019763311924883037,
+          -0.8405692739560836,
+          -0.5413434281329205,
+          0.2516493748175248
+        ],
+        "floor_height_m": 0.2516,
+        "tilt_deg": 32.78
+      }
+    ]
+  },
+  "densities_rows": [
+    {
+      "form": "bulk",
+      "material": "metal",
+      "density_g_per_ml": 1.458,
+      "min": 0.714,
+      "max": 2.25,
+      "n_objects": 3
+    },
+    {
+      "form": "bulk",
+      "material": "mineral",
+      "density_g_per_ml": 1.639,
+      "min": 1.5,
+      "max": 1.778,
+      "n_objects": 2
+    },
+    {
+      "form": "bulk",
+      "material": "paper",
+      "density_g_per_ml": 0.014,
+      "min": 0.014,
+      "max": 0.014,
+      "n_objects": 1
+    },
+    {
+      "form": "bulk",
+      "material": "plastic",
+      "density_g_per_ml": 0.571,
+      "min": 0.077,
+      "max": 1.2,
+      "n_objects": 6
+    },
+    {
+      "form": "bulk",
+      "material": "wood",
+      "density_g_per_ml": 0.692,
+      "min": 0.583,
+      "max": 0.8,
+      "n_objects": 2
+    },
+    {
+      "form": "solid",
+      "material": "glass",
+      "density_g_per_ml": 1.182,
+      "min": 0.9,
+      "max": 1.233,
+      "n_objects": 3
+    },
+    {
+      "form": "solid",
+      "material": "metal",
+      "density_g_per_ml": 0.82,
+      "min": 0.085,
+      "max": 1.556,
+      "n_objects": 2
+    },
+    {
+      "form": "solid",
+      "material": "mineral",
+      "density_g_per_ml": 1.6,
+      "min": 1.414,
+      "max": 2.0,
+      "n_objects": 3
+    },
+    {
+      "form": "solid",
+      "material": "paper",
+      "density_g_per_ml": 0.394,
+      "min": 0.061,
+      "max": 0.889,
+      "n_objects": 4
+    },
+    {
+      "form": "solid",
+      "material": "plastic",
+      "density_g_per_ml": 0.279,
+      "min": 0.042,
+      "max": 1.0,
+      "n_objects": 11
+    },
+    {
+      "form": "solid",
+      "material": "wood",
+      "density_g_per_ml": 0.875,
+      "min": 0.789,
+      "max": 0.875,
+      "n_objects": 3
+    }
+  ],
+  "real_synth_object_id_overlap": 40,
+  "real_synth_object_ids_union": 40,
+  "real_synth_attribute_mismatches": [],
+  "leakage_note": "Synthetic and real training records share every physical object_id; filter synthetic frames by grouped split before all training."
+}
