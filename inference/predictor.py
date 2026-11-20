@@ -49,7 +49,7 @@ def predict_frame(image_path: str | Path, detector: YOLO,
                   attr_model: torch.nn.Module, checkpoint: dict[str, Any],
                   device: torch.device, camera: dict[str, Any],
                   conf: float = 0.08, imgsz: int = 640, max_det: int = 30,
-                  take_threshold_g: float = 500.0) -> list[dict[str, Any]]:
+                  take_threshold_g: float = 500.0, observations: bool = False) -> list[dict[str, Any]]:
     image_path = Path(image_path)
     bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
     depth = cv2.imread(str(image_path.parent / "depth.png"), cv2.IMREAD_UNCHANGED)
@@ -116,6 +116,12 @@ def predict_frame(image_path: str | Path, detector: YOLO,
                 "mask": mask,
                 "box_mask_fallback": box_mask_fallback,
             })
+    if observations:
+        from ..geometry.observations import observe
+
+        for obj in predictions:
+            obj["observations"] = observe(rgb, depth, obj["mask"], plane, camera,
+                                          obj["geometry"], obj["box_mask_fallback"])
     return predictions
 
 
@@ -135,7 +141,7 @@ def predict_ids(data_root: str | Path, image_ids: list[str], detector_weights: s
                 attribute_weights: str | Path, output_csv: str | Path,
                 conf: float = 0.08, imgsz: int = 640, device: str = "cuda:0",
                 take_threshold_g: float = 500.0, visualize_dir: str | Path | None = None,
-                max_visualizations: int = 20) -> Path:
+                max_visualizations: int = 20, observations_path: str | Path | None = None) -> Path:
     data_root = Path(data_root).resolve()
     output_csv = Path(output_csv)
     output_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -143,6 +149,7 @@ def predict_ids(data_root: str | Path, image_ids: list[str], detector_weights: s
     detector = YOLO(str(detector_weights))
     camera = load_camera(data_root / "camera.json")
     rows = []
+    observations = []
     visualized = 0
     for fid in image_ids:
         path = data_root / "real" / "test" / fid / "color.png"
@@ -150,13 +157,25 @@ def predict_ids(data_root: str | Path, image_ids: list[str], detector_weights: s
             # Validation calls can use real/train frames.
             path = data_root / "real" / "train" / fid / "color.png"
         predictions = predict_frame(path, detector, attr_model, checkpoint, device_obj,
-                                    camera, conf, imgsz, take_threshold_g=take_threshold_g)
+                                    camera, conf, imgsz, take_threshold_g=take_threshold_g,
+                                    observations=observations_path is not None)
+        if observations_path is not None:
+            observations.append({"image_id": fid, "detections": [
+                {"box": obj["box"], "score": obj["score"], "learned_volume_ml": obj["volume_ml"],
+                 **obj["observations"]} for obj in predictions
+            ]})
         rows.append({"image_id": fid, "prediction": prediction_cell(predictions)})
         if visualize_dir is not None and visualized < max_visualizations:
             from ..evaluation.visualize import save_overlay
             save_overlay(path, predictions, Path(visualize_dir) / f"{fid}.png")
             visualized += 1
     pd.DataFrame(rows, columns=["image_id", "prediction"]).to_csv(output_csv, index=False)
+    if observations_path is not None:
+        import json
+
+        path = Path(observations_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(observations, indent=2, allow_nan=False), encoding="utf-8")
     return output_csv
 
 

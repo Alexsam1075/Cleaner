@@ -27,6 +27,7 @@ def main() -> None:
     parser.add_argument("--conf", type=float, default=0.08)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--visualize", action="store_true")
+    parser.add_argument("--observations", type=Path, help="Write experimental RGB-D observations as JSON.")
     args = parser.parse_args()
     output = Path(args.output).resolve()
     data_root = resolve_data_root(args.data_root)
@@ -39,9 +40,11 @@ def main() -> None:
          else output.parent / "sample_submission.csv")
     submission = Path(args.submission).resolve() if args.submission else output / "submissions" / "submission.csv"
     visual_dir = output / "visualizations" / "test" if args.visualize else None
+    if args.observations and args.observations.resolve() == submission.resolve():
+        parser.error("--observations and --submission must use different paths")
     predict_ids(data_root, sample_submission_ids(sample), detector, attributes, submission,
                 args.conf, args.imgsz, args.device, visualize_dir=visual_dir,
-                max_visualizations=24)
+                max_visualizations=24, observations_path=args.observations)
     print(f"Wrote {submission}")
     if visual_dir is not None:
         print(f"Saved overlays under {visual_dir}")
