@@ -25,7 +25,8 @@ import numpy as np
 import torch
 
 from .brain import Brain
-from .fast_scene import add_robot, random_trash, robot_camera
+from .fast_scene import add_robot, random_heavy, random_trash, robot_camera
+from .world import add_walls, free_spot, lidar, random_obstacle, robot_collides
 from .fastrt import FastCam, FloorTex, Scene, render, to_u8
 
 TILE = Path(__file__).resolve().parent / "assets/floor_tile.png"
@@ -70,7 +71,7 @@ class Live:
         self.rng = np.random.default_rng(0)
         self.lock = threading.Lock()
         self.keys = {"w": 0, "a": 0, "s": 0, "d": 0}
-        self.az, self.el, self.dist = math.pi + 0.6, 0.55, 2.2
+        self.az, self.el, self.dist = math.pi + 0.6, 0.62, 2.8
         self.robot_view = False
         self.show_gt = False
         self.auto = True
@@ -81,29 +82,49 @@ class Live:
         self.dets = []
         self.brain = Brain()
         self.reset()
+        obstacles = self.obstacles
+        self.brain.blocked = lambda x, y: not free_spot(obstacles, x, y, 0.12)
 
     # ---------------------------------------------------------------- world
     def reset(self):
         self.x, self.y, self.yaw = 0.0, 0.0, 0.0
         self.wl = self.wr = 0.0
+        # static world: walls and furniture, kept in a template scene reused every frame
+        self.world = Scene()
+        self.obstacles = add_walls(self.world)
+        for _ in range(int(self.rng.integers(4, 7))):
+            for _ in range(100):
+                ox, oy = self.rng.uniform(0.6, 4.3), self.rng.uniform(-1.6, 1.6)
+                if math.hypot(ox, oy) > 1.2 and free_spot(self.obstacles, ox, oy, 0.75):
+                    self.obstacles.append(random_obstacle(self.world, self.rng, ox, oy))
+                    break
         self.trash = []
-        for _ in range(8):
-            self.spawn(near=False)
+        for _ in range(9):
+            self.spawn(near=False, heavy=False)
+        for _ in range(5):
+            self.spawn(near=False, heavy=True)
         self.collected = 0
         self.collisions = 0
-        self.dets = []
-        if hasattr(self, 'brain'):
+        self.bumps = 0
+        self.in_contact = False
+        self.ranges = lidar(self.obstacles, self.x, self.y, self.yaw)
+        obstacles = self.obstacles
+        if hasattr(self, "brain"):
             self.brain.reset()
+            self.brain.blocked = lambda x, y: not free_spot(obstacles, x, y, 0.12)
+        self.dets = []
 
-    def spawn(self, near=True):
-        t = random_trash(self.rng)
-        for _ in range(50):
+    def spawn(self, near=True, heavy=None):
+        heavy = (self.rng.random() < 0.33) if heavy is None else heavy
+        t = random_heavy(self.rng) if heavy else random_trash(self.rng)
+        for _ in range(80):
             if near:
                 a, r = self.yaw + self.rng.uniform(-0.6, 0.6), self.rng.uniform(0.7, 1.6)
                 px, py = self.x + r * math.cos(a), self.y + r * math.sin(a)
             else:
                 px, py = self.rng.uniform(0.5, 3.6), self.rng.uniform(-1.3, 1.3)
-            if all(math.hypot(px - o[1], py - o[2]) > t.radius + o[0].radius + 0.05 for o in self.trash):
+            if all(math.hypot(px - o[1], py - o[2]) > t.radius + o[0].radius + 0.05 for o in self.trash) and \
+                    free_spot(self.obstacles, px, py, t.radius + 0.05):
                 self.trash.append([t, px, py, float(self.rng.uniform(0, 6.28)), -1, False])
                 return
 
@@ -131,15 +152,34 @@ class Live:
     def step(self, dt, frame):
         with self.lock:
             if self.auto and not any(self.keys.values()):
-                v, w = self.brain.act(self.x, self.y, self.yaw)
+                v, w = self.brain.act(self.x, self.y, self.yaw, dt, self.ranges)
             else:
                 v = 0.5 * (self.keys["w"] - self.keys["s"])
                 w = 1.6 * (self.keys["a"] - self.keys["d"])
-            self.yaw += w * dt
-            self.x += v * math.cos(self.yaw) * dt
-            self.y += v * math.sin(self.yaw) * dt
-            self.wl += (v - w * TRACK) * dt / WHEEL_R
-            self.wr += (v + w * TRACK) * dt / WHEEL_R
+            self.cmd = (v, w)
+            # skid-steer tracks: each side moves at v -/+ w * track half-width; walls and furniture block motion
+            nyaw = self.yaw + w * dt
+            nx, ny = self.x + v * math.cos(nyaw) * dt, self.y + v * math.sin(nyaw) * dt
+            if robot_collides(self.obstacles, nx, ny, nyaw):
+                if not self.in_contact:
+                    self.bumps += 1
+                    if self.auto:
+                        self.brain.bump(w)
+                self.in_contact = True
+                tx, ty = self.x + v * math.cos(self.yaw) * dt, self.y + v * math.sin(self.yaw) * dt
+                if not robot_collides(self.obstacles, tx, ty, self.yaw):          # slide: translate only
+                    self.x, self.y = tx, ty
+                elif not robot_collides(self.obstacles, self.x, self.y, nyaw):    # or rotate only
+                    self.yaw = nyaw
+                    v = 0.0
+                else:
+                    v = 0.0
+            else:
+                self.in_contact = False
+                self.x, self.y, self.yaw = nx, ny, nyaw
+            self.wl += (v - w * TRACK) * dt
+            self.wr += (v + w * TRACK) * dt
+            self.ranges = lidar(self.obstacles, self.x, self.y, self.yaw)
             fx, fy = self.x + 0.42 * math.cos(self.yaw), self.y + 0.42 * math.sin(self.yaw)
             self.brain.passed(fx, fy, self.x, self.y, self.yaw)
             for o in self.trash:
@@ -153,6 +193,7 @@ class Live:
                     self.collisions += 1
             self.trash = [o for o in self.trash if o[4] < 0 or frame - o[4] < 8]
             sc = Scene()
+            sc.mats, sc.prims, sc._group = list(self.world.mats), list(self.world.prims), self.world._group
             add_robot(sc, self.x, self.y, self.yaw, brush_angle=frame * 0.35 * (1 + abs(v)), wheel_angle=(self.wl, self.wr))
             vis, props = [], {}
             for k, (t, px, py, yaw, gone, hit) in enumerate(self.trash):
@@ -189,6 +230,14 @@ class Live:
                 if za > 0 and zb > 0:
                     cv2.line(img, (int(ax), int(ay)), (int(bx), int(by)), (255, 190, 80), 2, cv2.LINE_AA)
                     cv2.circle(img, (int(bx), int(by)), 9, (255, 190, 80), 2, cv2.LINE_AA)
+            n = len(self.ranges)
+            for k in range(0, n, 2):                      # lidar returns on obstacles
+                r = self.ranges[k]
+                if r < 3.9:
+                    a = self.yaw + k * 2 * math.pi / n
+                    (lx, ly), lz = cam.project((self.x + r * math.cos(a), self.y + r * math.sin(a), 0.12))
+                    if lz > 0 and 0 <= lx < self.W and 0 <= ly < self.H:
+                        cv2.circle(img, (int(lx), int(ly)), 2, (60, 60, 255), -1, cv2.LINE_AA)
             for d in dets:
                 (sx, sy), z = cam.project((d["world"][0], d["world"][1], d["top"] + 0.06))
                 if z > 0 and 0 < sx < self.W and 0 < sy < self.H:
@@ -204,7 +253,7 @@ class Live:
         lat = self.perc.latest["latency_ms"] if self.perc is not None and self.perc.latest else 0
         model = self.perc.name if self.perc is not None else "no model"
         cv2.putText(img, f"render {self.frame_ms:.1f} ms  |  model {lat:.0f} ms  |  collected {self.collected}  "
-                         f"collisions {self.collisions}  |  autopilot {(self.brain.mode if self.auto else 'off')}  memory {len(self.brain.memory)}",
+                         f"heavy hit {self.collisions}  bumps {self.bumps}  |  autopilot {(self.brain.mode if self.auto else 'off')}  memory {len(self.brain.memory)}",
                     (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
         cv2.putText(img, model, (12, 46), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1, cv2.LINE_AA)
         self.last_img = img
@@ -238,6 +287,24 @@ def serve(live: Live, port: int):
             pass
 
         def do_GET(self):
+            if self.path.startswith("/state"):
+                b = live.brain
+                st = {"x": live.x, "y": live.y, "yaw": live.yaw, "cmd": getattr(live, "cmd", None), "keys": live.keys,
+                      "auto": live.auto, "mode": b.mode, "wp": b.wp, "goal": b.lanes[b.wp % len(b.lanes)],
+                      "pursuit": b.pursuit, "front": float(min(live.ranges[:9].min(), live.ranges[-8:].min())),
+                      "in_contact": live.in_contact, "memory": len(b.memory), "avoid": b.avoid,
+                      "collide_now": robot_collides(live.obstacles, live.x, live.y, live.yaw),
+                      "free": {k: not robot_collides(live.obstacles, live.x + dx * math.cos(live.yaw), live.y + dx * math.sin(live.yaw), live.yaw + dw)
+                               for k, dx, dw in (("back", -0.03, 0), ("fwd", 0.03, 0), ("left", 0, 0.1), ("right", 0, -0.1))},
+                      "near": [(o.kind, o.circles[:1], o.boxes[:1]) for o in live.obstacles
+                               if any(math.hypot(c[0] - live.x, c[1] - live.y) < 1.0 for c in o.circles) or
+                               any(math.hypot(bx[0] - live.x, bx[1] - live.y) < 1.2 for bx in o.boxes)]}
+                body = json.dumps(st, default=float).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if self.path.startswith("/stream"):
                 self.send_response(200)
                 self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")

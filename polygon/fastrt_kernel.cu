@@ -250,6 +250,27 @@ __device__ V albedo(const float* M, const float* P, V q) {
     }
     return sinf(ang * 30.f) > 0.f ? c1 * 2.2f : c1 * 0.6f;
   }
+  if (tex == 10) {                     // caterpillar track: cleats run along the belt loop, rollers on the side
+    float hx = P[16], hy = P[17], hz = P[18], r = hz, a = hx - r;
+    if (fabsf(q.y) > hy - 0.006f) {      // side plate with road wheels
+      for (int k = 0; k < 4; k++) {
+        float cx = -a + 2.f * a * k / 3.f, dx = q.x - cx;
+        float rr = sqrtf(dx * dx + q.z * q.z);
+        if (rr < r * 0.62f) {
+          float ang = atan2f(q.z, dx) + amp / (r * 0.62f);
+          if (rr < r * 0.18f) return v3(0.05f, 0.05f, 0.055f);
+          return cosf(5.f * ang) > 0.5f ? v3(0.5f, 0.5f, 0.52f) : v3(0.16f, 0.16f, 0.17f);
+        }
+      }
+      return v3(0.025f, 0.025f, 0.028f);
+    }
+    float sarc;                          // arc length along the belt: top (x: +a -> -a), rear arc, bottom, front arc
+    if (fabsf(q.x) <= a) sarc = q.z > 0.f ? (a - q.x) : (2.f * a + PI * r + (q.x + a));
+    else if (q.x < -a) sarc = 2.f * a + (PI * 0.5f - atan2f(q.z, -(q.x + a))) * r;
+    else sarc = 4.f * a + PI * r + (PI * 0.5f + atan2f(q.z, q.x - a)) * r;
+    float u = (sarc + amp) * sc;
+    return (u - floorf(u)) < 0.35f ? c1 * 3.2f : c1;
+  }
   // 8: robot body — white panels, red trim on edges, black star and red dot on the front
   float hx = P[16], hy = P[17], hz = P[18], e = 0.04f;
   int nearc = (fabsf(q.x) > hx - e) + (fabsf(q.y) > hy - e) + (fabsf(q.z) > hz - e);

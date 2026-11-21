@@ -19,7 +19,7 @@ DEV = torch.device("cuda")
 HERE = Path(__file__).resolve().parent
 PS, MS = 32, 24
 TYPES = {"sphere": 0, "rbox": 1, "rcyl": 2, "capsule": 3, "ellipsoid": 4, "torus": 5}
-TEXTURES = {"plain": 0, "fbm": 1, "stone": 2, "wood": 3, "brushed": 4, "paper": 5, "label": 6, "bristle": 7, "robot": 8, "wheel": 9}
+TEXTURES = {"plain": 0, "fbm": 1, "stone": 2, "wood": 3, "brushed": 4, "paper": 5, "label": 6, "bristle": 7, "robot": 8, "wheel": 9, "track": 10}
 
 
 # ---------------------------------------------------------------- NVRTC + driver

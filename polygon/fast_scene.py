@@ -36,12 +36,12 @@ def add_robot(sc: Scene, x: float, y: float, yaw: float, brush_angle: float = 0.
         Prim("rcyl", (0.022, 0.016, 0.008), (-0.21, -0.15, TOP + 0.016), mat=m_red, bound=0.03),
         Prim("rbox", (0.06, 0.17, 0.09, 0.012), (-HX - 0.06, 0, 0.12), mat=m_white, bound=0.21),
     ]
+    # caterpillar tracks: wheel_angle = (left, right) belt travel in metres (or one value for both)
     wl, wr = (wheel_angle, wheel_angle) if not isinstance(wheel_angle, (tuple, list)) else wheel_angle
-    for wx in (-0.2, 0.2):
-        for s in (-1, 1):
-            ang = wl if s > 0 else wr
-            parts.append(Prim("rcyl", (0.085, 0.03, 0.012), (wx, s * (HY + 0.03), 0.085),
-                              rot=rot_x(math.pi / 2) @ rot_z(-ang), mat=m_rubber, bound=0.095))
+    for s in (-1, 1):
+        travel = wl if s > 0 else wr
+        m_track = sc.mat(Mat((0.03, 0.03, 0.033), roughness=0.85, texture="track", tex_scale=18.0, tex_amp=travel))
+        parts.append(Prim("rbox", (0.33, 0.04, 0.085, 0.084), (0.0, s * (HY + 0.04), 0.085), mat=m_track, bound=0.36))
     for s in (-1, 1):
         bx, by = HX + 0.10, s * 0.15
         parts.append(Prim("rcyl", (0.16, 0.022, 0.01), (bx, by, 0.025), rot=rot_z(brush_angle * s), mat=m_bristle,
@@ -211,4 +211,19 @@ def random_trash(rng, material=None) -> Trash:
     t.filled = kind in ("bottle", "can") and material in ("plastic", "glass", "metal") and rng.random() < 0.3
     rho = rng.uniform(0.85, 1.1) if t.filled else float(np.exp(rng.uniform(np.log(lo), np.log(hi))))
     t.mass_g = t.volume_ml * rho
+    return t
+
+
+def random_heavy(rng) -> Trash:
+    """Trash the robot must not take (mass > 500 g): bricks, big stones, filled bottles, metal blocks."""
+    for _ in range(400):
+        t = random_trash(rng, str(rng.choice(["mineral", "metal", "glass", "plastic"], p=[0.4, 0.25, 0.2, 0.15])))
+        if t.take == 0:
+            return t
+    u = lambda a, b: float(rng.uniform(a, b))
+    b = (u(0.09, 0.11), u(0.045, 0.055), u(0.03, 0.035))
+    mat = Mat((0.42, 0.14, 0.08), (0.3, 0.1, 0.06), 0.85, texture="stone", tex_scale=40)
+    t = Trash("brick", "solid", "mineral", [Prim("rbox", (*b, 0.004), (0, 0, b[2]), bound=0.13)], mat, 0.13, 2 * b[2])
+    t.volume_ml = 8 * b[0] * b[1] * b[2] * 1e6
+    t.mass_g = t.volume_ml * 1.8
     return t

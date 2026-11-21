@@ -31,6 +31,8 @@ class Brain:
         self.blacklist = []           # (x, y, until) places the robot gave up on
         self.pursuit = None           # (x, y, started, best_dist, best_time)
         self.turned, self.moved, self.last = 0.0, 0.0, None
+        self.avoid = None             # obstacle avoidance state: turn, then bypass
+        self.blocked = None           # callable(x, y) -> True where the lidar map has a wall or furniture
 
     def _lanes(self):
         x0, x1, y0, y1 = ARENA
@@ -49,6 +51,8 @@ class Brain:
         matched = set()
         for d in dets:
             x, y = float(d["world"][0]), float(d["world"][1])
+            if d.get("top", 0.0) > 0.4 or (self.blocked is not None and self.blocked(x, y)):
+                continue                       # walls/furniture seen by the lidar are not trash
             best, bd = None, 0.14
             for i, m in enumerate(self.memory):
                 dist = math.hypot(m["x"] - x, m["y"] - y)
@@ -58,7 +62,9 @@ class Brain:
             if any(math.hypot(x - bx, y - by) < 0.2 and until > time.time() for bx, by, until in self.blacklist):
                 continue
             if best is None:
-                self.memory.append({"x": x, "y": y, "top": d["top"], "hits": 1, "misses": 0, "seen": time.time(), **info})
+                self.uid = getattr(self, "uid", 0) + 1
+                self.memory.append({"x": x, "y": y, "top": d["top"], "hits": 1, "misses": 0, "seen": time.time(),
+                                    "uid": self.uid, **info})
                 matched.add(len(self.memory) - 1)
             else:
                 m = self.memory[best]
@@ -94,13 +100,19 @@ class Brain:
             keep.append(m)
         self.memory = keep
 
+    def bump(self, w_cmd):
+        """Contact with a wall or furniture: back off, then turn the other way and go around."""
+        if self.avoid is None or self.avoid["state"] != "reverse":
+            side = -1.0 if w_cmd > 0 else 1.0
+            self.avoid = {"state": "reverse", "side": side, "t": time.time()}
+
     def _give_up(self, m):
         self.blacklist.append((m["x"], m["y"], time.time() + 20))
         self.memory = [k for k in self.memory if k is not m]
         self.pursuit = None
 
     # ---------------------------------------------------------------- control
-    def act(self, x, y, yaw, dt=0.033):
+    def act(self, x, y, yaw, dt=0.033, ranges=None):
         c, s = math.cos(yaw), math.sin(yaw)
         now = time.time()
         self.blacklist = [b for b in self.blacklist if b[2] > now]
@@ -126,21 +138,30 @@ class Brain:
         if best is not None:
             m = best[1]
             dist = math.hypot(m["x"] - x, m["y"] - y)
-            if self.pursuit is None or math.hypot(self.pursuit[0] - m["x"], self.pursuit[1] - m["y"]) > 0.15:
-                self.pursuit = [m["x"], m["y"], now, dist, now]
+            key = m.get("uid", id(m))
+            if self.pursuit is None or self.pursuit[0] != key:
+                self.pursuit = [key, None, now, dist, now]
             elif dist < self.pursuit[3] - 0.05:
                 self.pursuit[3], self.pursuit[4] = dist, now
             if now - self.pursuit[4] > 4.0 or now - self.pursuit[2] > 12.0:
                 self._give_up(m)
-                return self.act(x, y, yaw, dt)
+                return self.act(x, y, yaw, dt, ranges)
             self.mode, self.target = "target", m
             goal = (m["x"], m["y"])
         else:
-            self.mode, self.target, self.pursuit = "explore", None, None
+            if self.mode == "target":
+                self.pursuit = None
+            self.mode, self.target = "explore", None
             goal = self.lanes[self.wp % len(self.lanes)]
-            if math.hypot(goal[0] - x, goal[1] - y) < 0.3:
+            d = math.hypot(goal[0] - x, goal[1] - y)
+            if self.pursuit is None or self.pursuit[0] != goal[0] or self.pursuit[1] != goal[1]:
+                self.pursuit = [goal[0], goal[1], now, d, now]
+            elif d < self.pursuit[3] - 0.05:
+                self.pursuit[3], self.pursuit[4] = d, now
+            if d < 0.3 or now - self.pursuit[4] > 8.0:      # reached, or blocked by an obstacle
                 self.wp += 1
                 goal = self.lanes[self.wp % len(self.lanes)]
+                self.pursuit = None
         dx, dy = goal[0] - x, goal[1] - y
         err = _wrap(math.atan2(dy, dx) - yaw)
         dist = math.hypot(dx, dy)
@@ -158,4 +179,35 @@ class Brain:
                 push = (1 - fwd / 1.0) * (1 - abs(lat) / 0.5)
                 w += (-1.0 if lat > 0 else 1.0) * 2.2 * push
                 v *= 1 - 0.6 * push
+        if ranges is not None:                  # lidar: obstacle avoidance with hysteresis
+            n = len(ranges)
+            deg = 360.0 / n
+            sector = lambda a0, a1: [ranges[int(round(a / deg)) % n] for a in range(a0, a1 + 1, int(max(deg, 1)))]
+            front = min(sector(-35, 35)) - 0.38
+            left, right = min(sector(25, 110)), min(sector(-110, -25))
+            if (self.avoid is None or self.avoid["state"] == "bypass") and front < 0.45:
+                side = 1.0 if left > right + 0.1 else (-1.0 if right > left + 0.1 else (1.0 if err >= 0 else -1.0))
+                self.avoid = {"state": "turn", "side": side, "t": now}
+            if self.avoid is not None:
+                a = self.avoid
+                if a["state"] == "reverse":
+                    v, w = -0.18, 0.0
+                    if now - a["t"] > 0.9:
+                        a.update(state="turn", t=now)
+                elif a["state"] == "turn":
+                    v, w = (-0.05 if front < 0.15 else 0.0), 1.4 * a["side"]
+                    if front > 0.9 or now - a["t"] > 4.0:
+                        a.update(state="bypass", t=now)
+                else:                                   # bypass: drive along the obstacle for a moment
+                    v, w = 0.3, 0.0
+                    if front < 0.45:
+                        a.update(state="turn", t=now)
+                    elif now - a["t"] > 1.2:
+                        self.avoid = None
+            side_l, side_r = min(sector(60, 120)) - 0.33, min(sector(-120, -60)) - 0.33
+            if self.avoid is None or self.avoid["state"] == "bypass":
+                if side_l < 0.1:
+                    w -= 0.7
+                if side_r < 0.1:
+                    w += 0.7
         return v, max(-1.8, min(1.8, w))
