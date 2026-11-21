@@ -350,3 +350,53 @@ def parts_volume_ml(cloud: ObjectCloud, form: str, cell_m: float = 0.004) -> tup
     hm = complete_symmetric(heightmap(cloud, cell_m), cell_m)
     fits = [fit_part(p, kinds, pad=cell_m) for p in split_parts(hm)]
     return float(sum(f.volume_ml for f in fits)), fits
+
+
+# ---------------------------------------------------------------- single entry point
+
+def _area_2d(pts: np.ndarray) -> float:
+    if len(pts) < 3:
+        return 0.0
+    from scipy.spatial import ConvexHull, QhullError
+    try:
+        return float(ConvexHull(pts).volume)
+    except QhullError:
+        return 0.0
+
+
+def _hull_ml(hm: ObjectCloud) -> float:
+    if len(hm.h) < 4:
+        return 0.0
+    from scipy.spatial import ConvexHull, QhullError
+    top = np.column_stack([hm.uv, hm.h])
+    base = np.column_stack([hm.uv, np.zeros(len(hm.h))])
+    try:
+        return float(ConvexHull(np.vstack([top, base])).volume * 1e6)
+    except QhullError:
+        return 0.0
+
+
+def estimate_volume(depth_mm: np.ndarray, mask: np.ndarray, plane: np.ndarray, camera: dict,
+                    form: str, class_height_m: float | None = None, cell_m: float = 0.004,
+                    erode_px: int = 2, min_h_m: float = 0.003) -> dict:
+    """Several geometric volume estimates (ml, each >= 1) plus diagnostics for one object."""
+    cloud = clean_cloud(depth_mm, mask, plane, camera, erode_px=erode_px, min_h_m=min_h_m)
+    footprint_m2 = _area_2d(cloud.footprint_uv)
+    out = {"valid_frac": cloud.valid_frac, "truncated": cloud.truncated, "footprint_m2": footprint_m2}
+    if len(cloud.h) < 20:
+        h = class_height_m if class_height_m else 0.05
+        v = max(footprint_m2 * h * 0.6 * 1e6, 1.0)
+        out.update(columns_ml=v, parts_ml=v, hull_ml=v, footprint_ml=v, n_parts=0, p95_h_m=0.0)
+        return out
+    p95 = float(np.quantile(cloud.h, 0.95))
+    hm = complete_symmetric(heightmap(cloud, cell_m), cell_m)
+    parts_ml, fits = parts_volume_ml(cloud, form, cell_m)
+    out.update(
+        columns_ml=max(columns_volume_ml(cloud, cell_m), 1.0),
+        parts_ml=max(parts_ml, 1.0),
+        hull_ml=max(_hull_ml(hm), 1.0),
+        footprint_ml=max(footprint_m2 * p95 * 1e6, 1.0),
+        n_parts=len(fits),
+        p95_h_m=p95,
+    )
+    return out
