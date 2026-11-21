@@ -141,7 +141,7 @@ class Live:
             self.wl += (v - w * TRACK) * dt / WHEEL_R
             self.wr += (v + w * TRACK) * dt / WHEEL_R
             fx, fy = self.x + 0.42 * math.cos(self.yaw), self.y + 0.42 * math.sin(self.yaw)
-            self.brain.passed(fx, fy)
+            self.brain.passed(fx, fy, self.x, self.y, self.yaw)
             for o in self.trash:
                 t, px, py, yaw, gone, hit = o
                 near = math.hypot(px - fx, py - fy) < 0.22

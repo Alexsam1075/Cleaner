@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import math
+import time
 
 ARENA = (-0.6, 4.2, -1.5, 1.5)       # x0, x1, y0, y1
 LANE = 0.55
@@ -27,6 +28,9 @@ class Brain:
         self.target = None
         self.lanes = self._lanes()
         self.wp = 0
+        self.blacklist = []           # (x, y, until) places the robot gave up on
+        self.pursuit = None           # (x, y, started, best_dist, best_time)
+        self.turned, self.moved, self.last = 0.0, 0.0, None
 
     def _lanes(self):
         x0, x1, y0, y1 = ARENA
@@ -51,21 +55,23 @@ class Brain:
                 if dist < bd:
                     best, bd = i, dist
             info = {k: d[k] for k in ("take", "material", "volume", "mass", "score")}
+            if any(math.hypot(x - bx, y - by) < 0.2 and until > time.time() for bx, by, until in self.blacklist):
+                continue
             if best is None:
-                self.memory.append({"x": x, "y": y, "top": d["top"], "hits": 1, "misses": 0, **info})
+                self.memory.append({"x": x, "y": y, "top": d["top"], "hits": 1, "misses": 0, "seen": time.time(), **info})
                 matched.add(len(self.memory) - 1)
             else:
                 m = self.memory[best]
                 k = m["hits"]
                 m["x"], m["y"] = (m["x"] * k + x) / (k + 1), (m["y"] * k + y) / (k + 1)
                 m.update(info)
-                m["top"], m["hits"], m["misses"] = d["top"], k + 1, 0
+                m["top"], m["hits"], m["misses"], m["seen"] = d["top"], k + 1, 0, time.time()
                 matched.add(best)
         keep = []
         for i, m in enumerate(self.memory):
             if i not in matched and self._in_view(cam, m):
                 m["misses"] += 1
-            if m["misses"] < 2:
+            if m["misses"] < 2 and time.time() - m.get("seen", 0) < 30:
                 keep.append(m)
         self.memory = keep
 
@@ -74,13 +80,40 @@ class Brain:
         (px, py), z = cam.project((m["x"], m["y"], 0.02))
         return 0.3 < z < 1.4 and 40 < px < cam.W - 40 and 40 < py < cam.H - 40
 
-    def passed(self, fx, fy):
-        """Forget objects under the robot's intake (collected, or found to be nothing)."""
-        self.memory = [m for m in self.memory if math.hypot(m["x"] - fx, m["y"] - fy) > 0.2 or not m["take"]]
+    def passed(self, fx, fy, x=None, y=None, yaw=None):
+        """Forget TAKE objects under the intake or under the body (collected, or nothing there)."""
+        keep = []
+        for m in self.memory:
+            if m["take"] and math.hypot(m["x"] - fx, m["y"] - fy) < 0.2:
+                continue
+            if m["take"] and x is not None:
+                c, s = math.cos(yaw), math.sin(yaw)
+                fwd, lat = c * (m["x"] - x) + s * (m["y"] - y), -s * (m["x"] - x) + c * (m["y"] - y)
+                if -0.45 < fwd < 0.55 and abs(lat) < 0.32:
+                    continue
+            keep.append(m)
+        self.memory = keep
+
+    def _give_up(self, m):
+        self.blacklist.append((m["x"], m["y"], time.time() + 20))
+        self.memory = [k for k in self.memory if k is not m]
+        self.pursuit = None
 
     # ---------------------------------------------------------------- control
-    def act(self, x, y, yaw):
+    def act(self, x, y, yaw, dt=0.033):
         c, s = math.cos(yaw), math.sin(yaw)
+        now = time.time()
+        self.blacklist = [b for b in self.blacklist if b[2] > now]
+        # loop detector: a full turn without moving 0.3 m means the plan is not working
+        if self.last is not None:
+            lx, ly, lyaw = self.last
+            self.turned += abs(_wrap(yaw - lyaw))
+            self.moved += math.hypot(x - lx, y - ly)
+        self.last = (x, y, yaw)
+        if self.turned > 2 * math.pi:
+            if self.moved < 0.3 and self.target is not None:
+                self._give_up(self.target)
+            self.turned, self.moved = 0.0, 0.0
         best = None
         for m in self.memory:
             if not m["take"]:
@@ -91,10 +124,19 @@ class Brain:
             if best is None or cost < best[0]:
                 best = (cost, m)
         if best is not None:
-            self.mode, self.target = "target", best[1]
-            goal = (best[1]["x"], best[1]["y"])
+            m = best[1]
+            dist = math.hypot(m["x"] - x, m["y"] - y)
+            if self.pursuit is None or math.hypot(self.pursuit[0] - m["x"], self.pursuit[1] - m["y"]) > 0.15:
+                self.pursuit = [m["x"], m["y"], now, dist, now]
+            elif dist < self.pursuit[3] - 0.05:
+                self.pursuit[3], self.pursuit[4] = dist, now
+            if now - self.pursuit[4] > 4.0 or now - self.pursuit[2] > 12.0:
+                self._give_up(m)
+                return self.act(x, y, yaw, dt)
+            self.mode, self.target = "target", m
+            goal = (m["x"], m["y"])
         else:
-            self.mode, self.target = "explore", None
+            self.mode, self.target, self.pursuit = "explore", None, None
             goal = self.lanes[self.wp % len(self.lanes)]
             if math.hypot(goal[0] - x, goal[1] - y) < 0.3:
                 self.wp += 1

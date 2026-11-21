@@ -48,3 +48,41 @@ def test_avoid_object_in_lane_pushes_aside():
     b.observe([_det(0.6, 0.05, take=0)], CAM)
     v, w = b.act(0.0, 0.0, 0.0)
     assert abs(w) > 0.3
+
+
+def _drive(b, x, y, yaw, steps, dt=0.05):
+    import polygon.brain as br
+    t0 = br.time.time
+    clock = [0.0]
+    br.time.time = lambda: clock[0]
+    try:
+        for _ in range(steps):
+            v, w = b.act(x, y, yaw, dt)
+            yaw += w * dt
+            x += v * math.cos(yaw) * dt
+            y += v * math.sin(yaw) * dt
+            b.passed(x + 0.42 * math.cos(yaw), y + 0.42 * math.sin(yaw), x, y, yaw)
+            clock[0] += dt
+    finally:
+        br.time.time = t0
+    return x, y, yaw
+
+
+def test_target_beside_the_body_does_not_trap_the_robot():
+    b = Brain()
+    b.memory.append({"x": 0.1, "y": 0.36, "top": 0.05, "take": 1, "material": "plastic", "volume": 50.0,
+                     "mass": 10.0, "score": 0.9, "hits": 3, "misses": 0, "seen": 0.0})
+    _drive(b, 0.0, 0.0, 0.0, 600)
+    assert b.mode == "explore"
+    assert b.wp >= 2                                    # swept lanes instead of spinning on the spot
+
+
+def test_unreachable_target_is_abandoned():
+    b = Brain()
+    b.memory.append({"x": 0.0, "y": 0.0, "top": 0.05, "take": 1, "material": "plastic", "volume": 50.0,
+                     "mass": 10.0, "score": 0.9, "hits": 3, "misses": 0, "seen": 0.0})
+    _drive(b, 5.0, 5.0, 0.0, 10)                         # pursuit starts
+    b.memory[0]["x"] = 100.0                             # target can never be reached
+    b.memory[0]["y"] = 100.0
+    _drive(b, 5.0, 5.0, math.pi, 400)
+    assert all(m["x"] != 100.0 for m in b.memory)
