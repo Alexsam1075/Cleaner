@@ -14,6 +14,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+try:
+    from ..geometry.volume_parts import corrected_footprint_m2
+except ImportError:
+    from geometry.volume_parts import corrected_footprint_m2
+
 FORMS = ["bulk", "solid"]
 MATERIALS = ["glass", "metal", "mineral", "paper", "plastic", "wood"]
 EST_KEYS = ["columns_ml", "parts_ml", "hull_ml", "footprint_ml"]
@@ -58,19 +63,22 @@ def _class_height(heights: dict, form: str, material: str) -> float:
     return 0.05
 
 
-def _features(est: dict, form: str, material: str, heights: dict) -> np.ndarray:
-    vals = {k: float(est[k]) for k in EST_KEYS}
+def _features(est: dict, form: str, material: str, heights: dict,
+              est_keys: list[str] = EST_KEYS) -> np.ndarray:
+    vals = {k: float(est[k]) for k in est_keys}
     if int(est["n_parts"]) == 0:              # no usable depth: footprint x typical class height
-        v = max(float(est["footprint_m2"]) * _class_height(heights, form, material) * 0.6 * 1e6, 1.0)
-        vals = {k: v for k in EST_KEYS}
-    x = [math.log(max(vals[k], 1.0)) for k in EST_KEYS]
+        h = _class_height(heights, form, material)
+        v = max(corrected_footprint_m2(est, h) * h * 0.6 * 1e6, 1.0)
+        vals = {k: v for k in est_keys}
+    x = [math.log(max(vals[k], 1.0)) for k in est_keys]
+    main = x[est_keys.index("parts_ml")] if "parts_ml" in est_keys else x[0]
     x += [float(est["valid_frac"]), float(bool(est["truncated"])), float(min(int(est["n_parts"]), 4)),
           float(int(est["n_parts"]) == 0)]
     x += [float(form == f) for f in FORMS]
     x += [float(material == m) for m in MATERIALS]
     x += [float(form == f and material == m) for f in FORMS for m in MATERIALS]
     # class-specific slope on the main estimate lets each class rescale its own bias
-    x += [x[1] * float(material == m) for m in MATERIALS]
+    x += [main * float(material == m) for m in MATERIALS]
     return np.asarray(x, dtype=np.float64)
 
 
@@ -93,14 +101,17 @@ def _ridge(X: np.ndarray, y: np.ndarray, w: np.ndarray, alpha: float) -> tuple[n
     return coef, mu, sd, ym
 
 
-def _design(rows: pd.DataFrame, heights: dict) -> np.ndarray:
-    return np.vstack([_features(r, r["form"], r["material"], heights) for r in rows.to_dict("records")])
+def _design(rows: pd.DataFrame, heights: dict, est_keys: list[str]) -> np.ndarray:
+    return np.vstack([_features(r, r["form"], r["material"], heights, est_keys)
+                      for r in rows.to_dict("records")])
 
 
-def fit_calibrator(rows: pd.DataFrame, alpha: float | None = None, inner_folds: int = 4) -> dict:
+def fit_calibrator(rows: pd.DataFrame, alpha: float | None = None, inner_folds: int = 4,
+                   est_keys: list[str] | None = None) -> dict:
     """Weighted ridge on log(volume); alpha chosen by inner grouped CV on these rows only."""
+    est_keys = list(est_keys or EST_KEYS)
     heights = _class_heights(rows)
-    X = _design(rows, heights)
+    X = _design(rows, heights, est_keys)
     y = np.log(rows["volume_ml"].to_numpy(dtype=float))
     w = _weights(rows["object_id"])
     if alpha is None:
@@ -118,11 +129,11 @@ def fit_calibrator(rows: pd.DataFrame, alpha: float | None = None, inner_folds: 
         alpha = best[1]
     coef, mu, sd, ym = _ridge(X, y, w, alpha)
     return {"alpha": float(alpha), "coef": coef.tolist(), "mu": mu.tolist(), "sd": sd.tolist(),
-            "intercept": ym, "class_heights": heights, "n_features": int(X.shape[1])}
+            "intercept": ym, "class_heights": heights, "n_features": int(X.shape[1]), "est_keys": est_keys}
 
 
 def apply_calibrator(cal: dict, est: dict, form: str, material: str) -> float:
-    x = _features(est, form, material, cal["class_heights"])
+    x = _features(est, form, material, cal["class_heights"], cal.get("est_keys", EST_KEYS))
     z = (x - np.asarray(cal["mu"])) / np.asarray(cal["sd"])
     return float(np.clip(math.exp(cal["intercept"] + float(z @ np.asarray(cal["coef"]))), 1.0, 20000.0))
 
@@ -175,14 +186,15 @@ def _breakdown(df: pd.DataFrame, pred_col: str) -> dict:
     return out
 
 
-def oof_predictions(real: pd.DataFrame, synth: pd.DataFrame | None, n_folds: int, seed: int) -> np.ndarray:
+def oof_predictions(real: pd.DataFrame, synth: pd.DataFrame | None, n_folds: int, seed: int,
+                    est_keys: list[str] | None = None) -> np.ndarray:
     pred = np.zeros(len(real))
     for tr, va in group_folds(real["object_id"].to_numpy(), n_folds, seed):
         train = real.iloc[tr]
         if synth is not None:
             allowed = set(train["object_id"])
             train = pd.concat([train, synth[synth["object_id"].isin(allowed)]], ignore_index=True)
-        cal = fit_calibrator(train)
+        cal = fit_calibrator(train, est_keys=est_keys)
         val = real.iloc[va]
         pred[va] = [apply_calibrator(cal, r, r["form"], r["material"]) for r in val.to_dict("records")]
     return pred
@@ -218,12 +230,16 @@ def main() -> None:
     for seed in range(args.seeds):
         real[f"oof_{seed}"] = oof_predictions(real, synth, args.folds, seed)
         report["calibrated"].append(_breakdown(real, f"oof_{seed}"))
+    old = [volume_score(oof_predictions(real, synth, args.folds, s, ["old_geom_ml"]), real["volume_ml"])
+           for s in range(args.seeds)]
+    report["calibrated_old_geom_V_mean"], report["calibrated_old_geom_V_std"] = float(np.mean(old)), float(np.std(old))
     vs = [c["V"] for c in report["calibrated"]]
     report["calibrated_V_mean"], report["calibrated_V_std"] = float(np.mean(vs)), float(np.std(vs))
 
     print(f"rows={len(real)} objects={report['n_objects']} with_synth={args.with_synth}")
     for col, r in report["raw"].items():
         print(f"raw {col:13s} V={r['V']:.4f}")
+    print(f"calibrated OLD geometry OOF V={report['calibrated_old_geom_V_mean']:.4f} ± {report['calibrated_old_geom_V_std']:.4f}")
     print(f"calibrated OOF V={report['calibrated_V_mean']:.4f} ± {report['calibrated_V_std']:.4f}")
     print("by bin (seed 0):", {k: round(v, 3) for k, v in report["calibrated"][0]["by_bin"].items()})
     print("by class (seed 0):", {k: round(v, 3) for k, v in report["calibrated"][0]["by_class"].items()})

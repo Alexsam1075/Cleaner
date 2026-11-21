@@ -52,3 +52,13 @@ def test_volume_score_matches_metric():
     assert volume_score([100.0], [100.0]) == 1.0
     assert volume_score([300.0], [100.0]) == 0.0
     assert volume_score([0.0], [100.0]) == 0.0
+
+
+def test_calibrator_on_old_geometry_only():
+    rows = _rows()
+    rows["old_geom_ml"] = rows["columns_ml"] * 1.1
+    cal = fit_calibrator(rows, est_keys=["old_geom_ml"])
+    assert cal["est_keys"] == ["old_geom_ml"]
+    r = rows.iloc[0].to_dict()
+    only = {k: r[k] for k in ("old_geom_ml", "valid_frac", "truncated", "n_parts", "footprint_m2")}
+    assert apply_calibrator(cal, only, r["form"], r["material"]) > 0

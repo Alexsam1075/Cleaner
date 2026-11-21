@@ -78,6 +78,23 @@ def refine_plane(depth_mm: np.ndarray, mask: np.ndarray, plane: np.ndarray, came
     return np.concatenate([n0, [d0]])
 
 
+def floor_noise_m(depth_mm: np.ndarray, mask: np.ndarray, plane: np.ndarray, camera: dict,
+                  ring_px: int = 25) -> float | None:
+    """Robust std (MAD) of floor points on a ring around the mask; None if too few points."""
+    n, d = _unit_plane(plane)
+    m = np.asarray(mask, dtype=np.uint8)
+    outer = cv2.dilate(m, np.ones((2 * ring_px + 1,) * 2, np.uint8))
+    inner = cv2.dilate(m, np.ones((11, 11), np.uint8))
+    ring = (outer > 0) & (inner == 0) & _valid_depth(depth_mm)
+    if ring.sum() < 200:
+        return None
+    dist = _backproject(depth_mm, ring, camera) @ n + d
+    dist = dist[np.abs(dist) < 0.02]
+    if len(dist) < 200:
+        return None
+    return float(1.4826 * np.median(np.abs(dist - np.median(dist))))
+
+
 def _floor_hit(xs: np.ndarray, ys: np.ndarray, n: np.ndarray, d: float, camera: dict) -> np.ndarray:
     r = np.stack([(xs - float(camera["cx"])) / float(camera["fx"]),
                   (ys - float(camera["cy"])) / float(camera["fy"]),
@@ -306,6 +323,21 @@ def heightmap(cloud: ObjectCloud, cell_m: float = 0.004) -> ObjectCloud:
                        valid_frac=cloud.valid_frac, truncated=cloud.truncated)
 
 
+def trim_isolated(hm: ObjectCloud, cell_m: float = 0.004, min_neighbors: int = 3) -> ObjectCloud:
+    """Drop heightmap cells with fewer than ``min_neighbors`` occupied 8-neighbours (floor speckle)."""
+    if len(hm.h) < 10:
+        return hm
+    ij = np.floor(hm.uv / cell_m).astype(np.int64)
+    occ = {tuple(k) for k in ij}
+    cnt = np.array([sum((a + da, b + db) in occ for da in (-1, 0, 1) for db in (-1, 0, 1) if da or db)
+                    for a, b in ij])
+    keep = cnt >= min_neighbors
+    if keep.sum() < 10:
+        return hm
+    return ObjectCloud(uv=hm.uv[keep], h=hm.h[keep], footprint_uv=hm.footprint_uv,
+                       valid_frac=hm.valid_frac, truncated=hm.truncated)
+
+
 def complete_symmetric(hm: ObjectCloud, cell_m: float = 0.004) -> ObjectCloud:
     """Fill the side hidden from the camera by mirroring near-side cells across the ridge line.
 
@@ -347,7 +379,7 @@ def complete_symmetric(hm: ObjectCloud, cell_m: float = 0.004) -> ObjectCloud:
 
 def parts_volume_ml(cloud: ObjectCloud, form: str, cell_m: float = 0.004) -> tuple[float, list[PartFit]]:
     kinds = BULK_KINDS if form == "bulk" else SOLID_KINDS
-    hm = complete_symmetric(heightmap(cloud, cell_m), cell_m)
+    hm = complete_symmetric(trim_isolated(heightmap(cloud, cell_m), cell_m), cell_m)
     fits = [fit_part(p, kinds, pad=cell_m) for p in split_parts(hm)]
     return float(sum(f.volume_ml for f in fits)), fits
 
@@ -376,26 +408,84 @@ def _hull_ml(hm: ObjectCloud) -> float:
         return 0.0
 
 
+FOOTPRINT_HEIGHTS_M = (0.0, 0.02, 0.04, 0.08, 0.16)
+
+
+def footprint_areas(mask: np.ndarray, plane: np.ndarray, camera: dict,
+                    heights=FOOTPRINT_HEIGHTS_M) -> list[float]:
+    """Area of the object's floor footprint, assuming the object is ``h`` tall, for each h.
+
+    In every image column the lowest mask pixel is where the object meets the floor and the
+    highest is its top edge, so the top ray is cut at height h instead of at the floor.
+    """
+    n, d = _unit_plane(plane)
+    fwd, side = _floor_axes(n)
+    m = np.asarray(mask, dtype=bool)
+    cols = np.nonzero(m.any(axis=0))[0]
+    if len(cols) < 2:
+        return [0.0] * len(heights)
+    top = np.argmax(m[:, cols], axis=0)
+    bottom = m.shape[0] - 1 - np.argmax(m[::-1, cols], axis=0)
+
+    def cast(xs, ys, h):
+        r = np.stack([(xs - float(camera["cx"])) / float(camera["fx"]),
+                      (ys - float(camera["cy"])) / float(camera["fy"]), np.ones(len(xs))], axis=1)
+        denom = r @ n
+        ok = denom < -1e-9
+        h = min(h, 0.9 * d)
+        P = r[ok] * (-(d - h) / denom[ok])[:, None] - h * n
+        return np.stack([P @ fwd, P @ side], axis=1)
+
+    xs = cols.astype(np.float64)
+    base = cast(xs, bottom.astype(np.float64), 0.0)
+    out = []
+    for h in heights:
+        upper = cast(xs, top.astype(np.float64), h)
+        if len(upper) != len(base):           # a ray missed the floor: keep the plain cast
+            out.append(_area_2d(np.vstack([base, upper])))
+            continue
+        # a column whose lowest pixel lands beyond its own top edge shows only the top edge
+        # (common at the lateral extremes): its floor point is not a real contact point
+        real = np.linalg.norm(base, axis=1) <= np.linalg.norm(upper, axis=1)
+        out.append(_area_2d(np.vstack([np.where(real[:, None], base, upper), upper])))
+    return out
+
+
+def corrected_footprint_m2(est: dict, height_m: float) -> float:
+    """Floor footprint for an object of the given height, interpolated from ``fp_area_*`` keys."""
+    keys = [f"fp_area_{int(round(h * 1000))}" for h in FOOTPRINT_HEIGHTS_M]
+    if not all(k in est for k in keys):
+        return float(est.get("footprint_m2", 0.0))
+    areas = [float(est[k]) for k in keys]
+    return float(np.interp(float(height_m), FOOTPRINT_HEIGHTS_M, areas))
+
+
 def estimate_volume(depth_mm: np.ndarray, mask: np.ndarray, plane: np.ndarray, camera: dict,
                     form: str, class_height_m: float | None = None, cell_m: float = 0.004,
                     erode_px: int = 2, min_h_m: float = 0.003) -> dict:
     """Several geometric volume estimates (ml, each >= 1) plus diagnostics for one object."""
+    noise = floor_noise_m(depth_mm, mask, plane, camera)
+    if noise is not None:                     # 3 sigma of the floor, capped so small objects survive
+        min_h_m = float(np.clip(3.0 * noise, min_h_m, 0.006))
     cloud = clean_cloud(depth_mm, mask, plane, camera, erode_px=erode_px, min_h_m=min_h_m)
     footprint_m2 = _area_2d(cloud.footprint_uv)
-    out = {"valid_frac": cloud.valid_frac, "truncated": cloud.truncated, "footprint_m2": footprint_m2}
+    out = {"valid_frac": cloud.valid_frac, "truncated": cloud.truncated, "footprint_m2": footprint_m2,
+           "min_h_m": min_h_m}
+    for h, a in zip(FOOTPRINT_HEIGHTS_M, footprint_areas(mask, plane, camera)):
+        out[f"fp_area_{int(round(h * 1000))}"] = a
     if len(cloud.h) < 20:
         h = class_height_m if class_height_m else 0.05
-        v = max(footprint_m2 * h * 0.6 * 1e6, 1.0)
+        v = max(corrected_footprint_m2(out, h) * h * 0.6 * 1e6, 1.0)
         out.update(columns_ml=v, parts_ml=v, hull_ml=v, footprint_ml=v, n_parts=0, p95_h_m=0.0)
         return out
     p95 = float(np.quantile(cloud.h, 0.95))
-    hm = complete_symmetric(heightmap(cloud, cell_m), cell_m)
+    hm = complete_symmetric(trim_isolated(heightmap(cloud, cell_m), cell_m), cell_m)
     parts_ml, fits = parts_volume_ml(cloud, form, cell_m)
     out.update(
         columns_ml=max(columns_volume_ml(cloud, cell_m), 1.0),
         parts_ml=max(parts_ml, 1.0),
         hull_ml=max(_hull_ml(hm), 1.0),
-        footprint_ml=max(footprint_m2 * p95 * 1e6, 1.0),
+        footprint_ml=max(corrected_footprint_m2(out, p95) * p95 * 1e6, 1.0),
         n_parts=len(fits),
         p95_h_m=p95,
     )

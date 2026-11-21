@@ -103,15 +103,16 @@ def predict_frame(image_path: str | Path, detector: YOLO,
                                            posinf=np.log1p(5000.0), neginf=0.0))
             volume_ml = float(np.clip(np.expm1(np.clip(volume_log, 0.0, np.log1p(20000.0))), 1.0, 20000.0))
             mass_g = float(np.clip(np.expm1(np.clip(mass_log, 0.0, np.log1p(5000.0))), 1.0, 5000.0))
+            take_prob = float(torch.sigmoid(output["take_logit"].float()).item())
+            take = int(take_prob >= 0.5)
+            # Keep the physical boundary visible in the output when the take head is uncertain.
+            # The network mass decides here for both backends: parts mass is a weaker take signal.
+            if abs(take_prob - 0.5) < 0.08:
+                take = int(mass_g <= take_threshold_g)
             if volume_backend == "parts":
                 volume_ml, mass_g = parts_volume_for_detection(
                     depth, mask, plane, camera, ["bulk", "solid"][form_idx], MATERIALS[material_idx],
                     volume_calibrator, densities)
-            take_prob = float(torch.sigmoid(output["take_logit"].float()).item())
-            take = int(take_prob >= 0.5)
-            # Keep the physical boundary visible in the output when the take head is uncertain.
-            if abs(take_prob - 0.5) < 0.08:
-                take = int(mass_g <= take_threshold_g)
             predictions.append({
                 "box": [x1, y1, x2, y2],
                 "score": float(score * max(float(combined_form.max()), 0.05)),

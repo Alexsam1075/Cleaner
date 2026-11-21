@@ -21,3 +21,13 @@ def test_parts_backend_volume_and_mass():
 def test_density_fallback_for_unknown_class():
     dens = load_densities(DENSITIES_CSV)
     assert density_for(dens, "solid", "unobtainium") > 0
+
+
+def test_predict_cli_has_volume_backend_flags():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    pkg = Path(__file__).resolve().parents[1].name
+    predict = __import__(f"{pkg}.predict", fromlist=["build_parser"])
+    args = predict.build_parser().parse_args(["--volume-backend", "parts", "--volume-calibrator", "c.json"])
+    assert args.volume_backend == "parts" and args.volume_calibrator == "c.json"
