@@ -24,6 +24,7 @@ import cv2
 import numpy as np
 import torch
 
+from .brain import Brain
 from .fast_scene import add_robot, random_trash, robot_camera
 from .fastrt import FastCam, FloorTex, Scene, render, to_u8
 
@@ -78,6 +79,7 @@ class Live:
         self.perc = perception
         self.perc_busy = False
         self.dets = []
+        self.brain = Brain()
         self.reset()
 
     # ---------------------------------------------------------------- world
@@ -90,6 +92,8 @@ class Live:
         self.collected = 0
         self.collisions = 0
         self.dets = []
+        if hasattr(self, 'brain'):
+            self.brain.reset()
 
     def spawn(self, near=True):
         t = random_trash(self.rng)
@@ -123,28 +127,11 @@ class Live:
             elif act == "auto":
                 self.auto = not self.auto
 
-    def autopilot(self):
-        """Steer to the nearest model-TAKE detection ahead; veer away from model-AVOID ones."""
-        c, s = math.cos(self.yaw), math.sin(self.yaw)
-        best, w_avoid = None, 0.0
-        for d in self.dets:
-            dx, dy = d["world"][0] - self.x, d["world"][1] - self.y
-            fwd, lat = c * dx + s * dy, -s * dx + c * dy
-            if d["take"] and fwd > 0.15 and abs(math.atan2(lat, fwd)) < 1.2:
-                dist = math.hypot(fwd, lat)
-                if best is None or dist < best[0]:
-                    best = (dist, math.atan2(lat, fwd))
-            if not d["take"] and 0 < fwd < 0.9 and abs(lat) < 0.42:
-                w_avoid += (-1.0 if lat > 0 else 1.0) * 1.8 * (1 - fwd / 0.9)
-        if best is None:
-            return 0.12, 0.55 + w_avoid
-        return 0.32, max(-1.6, min(1.6, 2.2 * best[1])) + w_avoid
-
     # ---------------------------------------------------------------- frame
     def step(self, dt, frame):
         with self.lock:
             if self.auto and not any(self.keys.values()):
-                v, w = self.autopilot()
+                v, w = self.brain.act(self.x, self.y, self.yaw)
             else:
                 v = 0.5 * (self.keys["w"] - self.keys["s"])
                 w = 1.6 * (self.keys["a"] - self.keys["d"])
@@ -154,6 +141,7 @@ class Live:
             self.wl += (v - w * TRACK) * dt / WHEEL_R
             self.wr += (v + w * TRACK) * dt / WHEEL_R
             fx, fy = self.x + 0.42 * math.cos(self.yaw), self.y + 0.42 * math.sin(self.yaw)
+            self.brain.passed(fx, fy)
             for o in self.trash:
                 t, px, py, yaw, gone, hit = o
                 near = math.hypot(px - fx, py - fy) < 0.22
@@ -180,7 +168,9 @@ class Live:
             eye = (cx + self.dist * math.cos(self.el) * math.cos(self.az), cy + self.dist * math.cos(self.el) * math.sin(self.az),
                    0.15 + self.dist * math.sin(self.el))
             cam = FastCam.look_at(eye, (cx, cy, 0.15), W=self.W, H=self.H, fov_deg=55)
-            dets = list(self.dets)
+            dets = [dict(m, world=(m['x'], m['y'])) for m in self.brain.memory]
+            target = self.brain.target
+            mode = self.brain.mode
         # model: capture the robot's D435 frame when the worker is free
         if self.perc is not None and not self.perc_busy:
             self.perc_busy = True
@@ -193,6 +183,12 @@ class Live:
             img = overlay(self.perc.latest["frame"], self.perc.latest["dets"], self.W, self.H)
         else:
             img = to_u8(render(sc, cam, floor=self.floor, spp=self.spp, seed=frame)["rgb"])
+            if self.auto and target is not None:
+                (ax, ay), za = cam.project((fx, fy, 0.01))
+                (bx, by), zb = cam.project((target["x"], target["y"], 0.01))
+                if za > 0 and zb > 0:
+                    cv2.line(img, (int(ax), int(ay)), (int(bx), int(by)), (255, 190, 80), 2, cv2.LINE_AA)
+                    cv2.circle(img, (int(bx), int(by)), 9, (255, 190, 80), 2, cv2.LINE_AA)
             for d in dets:
                 (sx, sy), z = cam.project((d["world"][0], d["world"][1], d["top"] + 0.06))
                 if z > 0 and 0 < sx < self.W and 0 < sy < self.H:
@@ -208,7 +204,7 @@ class Live:
         lat = self.perc.latest["latency_ms"] if self.perc is not None and self.perc.latest else 0
         model = self.perc.name if self.perc is not None else "no model"
         cv2.putText(img, f"render {self.frame_ms:.1f} ms  |  model {lat:.0f} ms  |  collected {self.collected}  "
-                         f"collisions {self.collisions}  |  autopilot {'ON' if self.auto else 'off'}",
+                         f"collisions {self.collisions}  |  autopilot {(self.brain.mode if self.auto else 'off')}  memory {len(self.brain.memory)}",
                     (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
         cv2.putText(img, model, (12, 46), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1, cv2.LINE_AA)
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 82])
@@ -219,6 +215,7 @@ class Live:
             dets = self.perc.run(*inputs, rng=np.random.default_rng())
             with self.lock:
                 self.dets = dets
+                self.brain.observe(dets, inputs[0])
         except Exception as e:  # keep the loop alive; show the error in the log
             print("perception error:", repr(e), flush=True)
         finally:
