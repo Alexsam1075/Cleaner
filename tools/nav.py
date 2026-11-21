@@ -25,6 +25,11 @@ nav.py — маршрут объезда для робота-уборщика Su
     python nav.py --data dataset --frames-glob "real/train/*" --submission val_pred.csv \
                   --gt-labels dataset/labels/real_train.json --avoid-mass-g 350 --out nav_eval
 
+Решение по объёму из глубины (робот меряет сам, независимо от модели):
+    --geom-volume-ml 300 [--ignore-take]
+    Объезжать объект, если его объём по видимой глубине больше 300 мл. С --ignore-take от модели нужны
+    только рамки, решение «тяжёлый ли» робот принимает сам.
+
 Режим осторожности:
     --avoid-mass-g 350   объезжать всё, что по оценке модели тяжелее 350 г, даже если take=1.
                          Наезд на тяжёлое опаснее, чем пропущенный лёгкий предмет, а оценка массы
@@ -60,6 +65,9 @@ MIN_UNKNOWN_CM2 = 20           # мелочь меньше этой площад
 UNOBSERVED_COST = 6.0          # во сколько раз дороже ехать туда, где пол не виден
 OUTSIDE_FOV_COST = 15.0        # вне поля обзора (по бокам у робота): можно, но только если иначе никак
 MIN_HOLE_PX = 2500             # область кадра без глубины больше этого — препятствие «нет глубины»
+ATTACH_DIST = 0.08             # выступ ближе этого к найденному объекту считается его частью, м
+ATTACH_MAX_TAKE_CM2 = 80       # к лёгкой цели присоединяем только мелкие куски
+ATTACH_MAX_TAKE_HOLE_CM2 = 200  # ... а области без глубины — до этой площади
 HOLE_MAX_B = 1.3               # дальше этого пропуски глубины — норма для камеры, не препятствие
 SELF_MASK_DIR = Path(__file__).with_name("nav_self_masks")
 
@@ -162,6 +170,38 @@ def height_map(depth, floor, cam, ignore=None):
     return hm_filled, observed, fov
 
 
+def refine_floor(depth, floor, cam, ignore=None, iters=4):
+    """Уточняет плоскость пола по самому кадру: берёт точки почти на полу (|h| < 3 см, ближе 2 м),
+    подгоняет плоскость МНК и отбрасывает выбросы. Нужна, когда плоскость из meta.json чуть неточна
+    и дальний пол «поднимается» над ней на несколько сантиметров."""
+    H, W = depth.shape
+    vv, uu = np.mgrid[0:H:4, 0:W:4]
+    m = depth[vv, uu] > 0
+    if ignore is not None:
+        m &= ~ignore[vv, uu]
+    v, u = vv[m], uu[m]
+    if len(v) < 2000:
+        return floor
+    z = depth[v, u].astype(np.float64) / 1000.0
+    p = cam.rays(u.astype(float), v.astype(float)) * z[:, None]
+    abh = floor.to_floor(p)
+    keep = (np.abs(abh[:, 2]) < 0.03) & (abh[:, 1] < 2.0)
+    for _ in range(iters):
+        if keep.sum() < 1500:
+            return floor
+        q = p[keep]
+        c = q.mean(axis=0)
+        n = np.linalg.svd(q - c, full_matrices=False)[2][-1]
+        if n @ floor.n < 0:
+            n = -n
+        d = -n @ c
+        res = p @ n + d
+        keep = (np.abs(res) < 0.012) & (abh[:, 1] < 2.0)
+    if np.degrees(np.arccos(np.clip(n @ floor.n, -1, 1))) > 5:      # слишком сильно ушли — не верим
+        return floor
+    return Floor([n[0], n[1], n[2], d])
+
+
 def object_footprint(pix_mask, depth, floor, cam):
     """Пятно объекта на полу (клетки) по его пикселям: точки с глубиной + проекция пикселей без глубины."""
     fp = np.zeros((NB, NA), np.uint8)
@@ -187,6 +227,22 @@ def object_footprint(pix_mask, depth, floor, cam):
     cnts, _ = cv2.findContours(fp, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cv2.drawContours(fp, cnts, -1, 1, thickness=-1)
     return fp > 0, hmax
+
+
+def measure_geom_volume(pix_mask, depth, floor, cam, cell=0.004):
+    """Объём объекта по видимой глубине (как в бейзлайне кейса): пол делится на клетки 4×4 мм,
+    в каждой берётся самая высокая точка объекта, высоты складываются. Точки без глубины не входят."""
+    v, u = np.nonzero(pix_mask & (depth > 0))
+    if len(v) < 30:
+        return float("nan")
+    z = depth[v, u].astype(np.float64) / 1000.0
+    abh = floor.to_floor(cam.rays(u.astype(float), v.astype(float)) * z[:, None])
+    keys = np.floor(abh[:, 0] / cell).astype(np.int64) * 100000 + np.floor(abh[:, 1] / cell).astype(np.int64)
+    order = np.argsort(keys)
+    k, h = keys[order], abh[order, 2]
+    starts = np.r_[0, np.nonzero(np.diff(k))[0] + 1]
+    tops = np.maximum.reduceat(h, starts)
+    return float(np.clip(tops, 0, None).sum() * cell * cell * 1e6)
 
 
 def polygon_mask(segmentation, h, w):
@@ -556,13 +612,16 @@ def draw_bev(hm, observed, fov, objects, infl, path_cells, scale=3):
 
 
 # ---------------------------------------------------------------- один кадр
-def process_frame(frame_dir, cam, objs, robot_w, margin, avoid_mass_g=None, gt_objs=None):
+def process_frame(frame_dir, cam, objs, robot_w, margin, avoid_mass_g=None, gt_objs=None,
+                  geom_volume_ml=None, ignore_take=False):
     color = cv2.imread(str(frame_dir / "color.png"))
     depth = cv2.imread(str(frame_dir / "depth.png"), cv2.IMREAD_UNCHANGED)
     meta = json.loads((frame_dir / "meta.json").read_text(encoding="utf-8"))
     floor = Floor(meta["floor_plane"])
     hpix = pixel_heights(depth, floor, cam)
     self_m = robot_self_mask(depth, hpix, meta)
+    floor = refine_floor(depth, floor, cam, ignore=self_m)
+    hpix = pixel_heights(depth, floor, cam)
     hm, observed, fov = height_map(depth, floor, cam, ignore=self_m)
 
     objects, known = [], np.zeros((NB, NA), bool)
@@ -573,7 +632,7 @@ def process_frame(frame_dir, cam, objs, robot_w, margin, avoid_mass_g=None, gt_o
         fp, hmax = object_footprint(pix, depth, floor, cam)
         if not fp.any():
             continue
-        kind = KIND_TAKE if o["take"] == 1 else KIND_AVOID
+        kind = KIND_TAKE if (ignore_take or o["take"] == 1) else KIND_AVOID
         note = o.get("label", "")
         mass = o.get("mass")
         if mass is not None:
@@ -583,18 +642,30 @@ def process_frame(frame_dir, cam, objs, robot_w, margin, avoid_mass_g=None, gt_o
                 and np.isfinite(mass) and mass > avoid_mass_g):
             kind, safety = KIND_AVOID, True
             note += f" (запас: >{avoid_mass_g:.0f} г)"
+        gvol = measure_geom_volume(pix, depth, floor, cam)
+        if kind == KIND_TAKE and geom_volume_ml is not None and np.isfinite(gvol) and gvol > geom_volume_ml:
+            kind, safety = KIND_AVOID, True
+            note += f" (объём по глубине {gvol:.0f} мл > {geom_volume_ml:.0f})"
         objects.append({"kind": kind, "footprint": fp, "pixels": pix, "note": note, "height_m": hmax,
-                        "source": o, "safety": safety})
+                        "source": o, "safety": safety, "geom_vol": gvol})
         known |= fp
 
     # неопознанные выступы: всё, что выше OBST_H и не принадлежит найденным объектам
     high = observed & (np.nan_to_num(hm, nan=0) > OBST_H) & ~(cv2.dilate(known.astype(np.uint8), disk(3)) > 0)
     n, lab, stats, _ = cv2.connectedComponentsWithStats(high.astype(np.uint8), 8)
     H, W = depth.shape
+    near_obj = [cv2.dilate(o["footprint"].astype(np.uint8), disk(ATTACH_DIST / GRID)) > 0 for o in objects]
     for k in range(1, n):
+        fp = lab == k
+        # выступ рядом с найденным объектом — кусок того же предмета (край, тень, прозрачная часть)
+        owner = next((i for i, nm in enumerate(near_obj) if (fp & nm).any()), None)
+        if owner is not None and objects[owner]["kind"] == KIND_TAKE and fp.sum() > ATTACH_MAX_TAKE_CM2:
+            owner = None                       # крупный выступ рядом с лёгкой целью — может быть отдельным предметом
+        if owner is not None:
+            objects[owner]["footprint"] = objects[owner]["footprint"] | fp
+            continue
         if stats[k, cv2.CC_STAT_AREA] * GRID * GRID * 1e4 < MIN_UNKNOWN_CM2:
             continue
-        fp = lab == k
         # пиксели кадра этого выступа: высокие пиксели, попадающие в его клетки
         hp = (np.nan_to_num(hpix, nan=0) > OBST_H) & ~self_m
         v, u = np.nonzero(hp)
@@ -630,6 +701,13 @@ def process_frame(frame_dir, cam, objs, robot_w, margin, avoid_mass_g=None, gt_o
         fp[i[ok], j[ok]] = 1
         fp = cv2.morphologyEx(fp, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8)) > 0
         if fp.sum() * GRID * GRID * 1e4 < MIN_UNKNOWN_CM2:
+            continue
+        owner = next((o for o in objects if o["kind"] != KIND_UNKNOWN and o["source"] is not None and
+                      (fp & (cv2.dilate(o["footprint"].astype(np.uint8), disk(ATTACH_DIST / GRID)) > 0)).any()), None)
+        if owner is not None and owner["kind"] == KIND_TAKE and fp.sum() > ATTACH_MAX_TAKE_HOLE_CM2:
+            owner = None                       # область без глубины у цели — обычно её теневая сторона
+        if owner is not None:
+            owner["footprint"] = owner["footprint"] | fp
             continue
         objects.append({"kind": KIND_UNKNOWN, "footprint": fp, "pixels": lab == k,
                         "note": "нет глубины", "height_m": float("nan"), "source": None})
@@ -669,7 +747,7 @@ def process_frame(frame_dir, cam, objs, robot_w, margin, avoid_mass_g=None, gt_o
 
     report = {
         "frame": frame_dir.name, "status": status, "robot_width_m": robot_w, "margin_m": margin,
-        "avoid_mass_g": avoid_mass_g,
+        "avoid_mass_g": avoid_mass_g, "geom_volume_ml": geom_volume_ml, "ignore_take": ignore_take,
         "path_floor_m": [[round(a, 3), round(b, 3)] for a, b in path_ab] if path_ab else [],
         "path_length_m": round(float(sum(math.dist(p, q) for p, q in zip(path_ab[:-1], path_ab[1:]))), 3) if path_ab else 0.0,
         "objects": [],
@@ -697,7 +775,8 @@ def process_frame(frame_dir, cam, objs, robot_w, margin, avoid_mass_g=None, gt_o
             "center_floor_m": [round(a, 3), round(b, 3)], "footprint_cm2": int(o["footprint"].sum()),
             "height_cm": (round(o["height_m"] * 100, 1) if np.isfinite(o["height_m"]) else None),
             "covered_by_robot": round(o["coverage"], 2) if "coverage" in o else None,
-            "avoided_by_safety_margin": bool(o.get("safety", False)), "status": o.get("status", "объезд")})
+            "avoided_by_safety_margin": bool(o.get("safety", False)),
+            "geom_volume_ml": (round(o["geom_vol"], 1) if np.isfinite(o.get("geom_vol", float("nan"))) else None), "status": o.get("status", "объезд")})
     return panel, report
 
 
@@ -712,6 +791,10 @@ def main():
     ap.add_argument("--margin", type=float, default=0.05, help="запас до препятствия, м")
     ap.add_argument("--avoid-mass-g", type=float, default=None,
                     help="режим осторожности: объезжать всё тяжелее этого (г), даже при take=1")
+    ap.add_argument("--geom-volume-ml", type=float, default=None,
+                    help="объезжать объект, если его объём по видимой глубине больше этого (мл)")
+    ap.add_argument("--ignore-take", action="store_true",
+                    help="не верить take из ответа модели: решают только --geom-volume-ml/--avoid-mass-g")
     ap.add_argument("--gt-labels", default=None,
                     help="истинная разметка для проверки: доля задетых тяжёлых и убранных лёгких")
     ap.add_argument("--out", default="nav_out")
@@ -733,7 +816,8 @@ def main():
     reports = []
     for fdir in frames:
         panel, rep = process_frame(fdir, cam, src.get(fdir.name, []), args.robot_width, args.margin,
-                                   args.avoid_mass_g, gt.get(fdir.name, []) if gt is not None else None)
+                                   args.avoid_mass_g, gt.get(fdir.name, []) if gt is not None else None,
+                                   args.geom_volume_ml, args.ignore_take)
         cv2.imwrite(str(out / f"{fdir.name}_nav.jpg"), panel, [cv2.IMWRITE_JPEG_QUALITY, 88])
         reports.append(rep)
         kinds = defaultdict(int)
@@ -741,7 +825,7 @@ def main():
             kinds[o["decision"]] += 1
         extra = sum(o["avoided_by_safety_margin"] for o in rep["objects"])
         print(f"{fdir.name}: {rep['status']} | путь {rep['path_length_m']} м | " +
-              ", ".join(f"{k}: {v}" for k, v in kinds.items()) + (f" | по запасу массы: {extra}" if extra else ""))
+              ", ".join(f"{k}: {v}" for k, v in kinds.items()) + (f" | объехать по запасу: {extra}" if extra else ""))
     if gt is not None:
         ev = [e for r in reports for e in r.get("gt_eval", [])]
         heavy = [e for e in ev if e["truth"] == "тяжёлый"]
