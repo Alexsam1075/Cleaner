@@ -102,7 +102,7 @@ class Live:
                 a, r = self.yaw + self.rng.uniform(-0.6, 0.6), self.rng.uniform(0.7, 1.6)
                 px, py = self.x + r * math.cos(a), self.y + r * math.sin(a)
             else:
-                px, py = self.rng.uniform(0.6, 3.5), self.rng.uniform(-1.0, 1.0)
+                px, py = self.rng.uniform(0.5, 3.6), self.rng.uniform(-1.3, 1.3)
             if all(math.hypot(px - o[1], py - o[2]) > t.radius + o[0].radius + 0.05 for o in self.trash):
                 self.trash.append([t, px, py, float(self.rng.uniform(0, 6.28)), -1, False])
                 return
@@ -207,6 +207,7 @@ class Live:
                          f"collisions {self.collisions}  |  autopilot {(self.brain.mode if self.auto else 'off')}  memory {len(self.brain.memory)}",
                     (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
         cv2.putText(img, model, (12, 46), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1, cv2.LINE_AA)
+        self.last_img = img
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 82])
         self.jpeg = buf.tobytes()
 

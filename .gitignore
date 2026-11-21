@@ -15,4 +15,4 @@ submissions/
 *.pem
 .ssh/
 .superpowers/
-polygon_out/
+docs/media/raw/
