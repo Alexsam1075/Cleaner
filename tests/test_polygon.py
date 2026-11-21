@@ -36,3 +36,17 @@ def test_random_trash_properties():
         assert ob.volume_ml > 0.5 and ob.mass_g > 0
         assert ob.take == int(ob.mass_g <= 500)
         assert ob.form in ("bulk", "solid")
+
+
+def test_fast_renderer_depth_and_volume():
+    from polygon.fastrt import FastCam, Mat, Prim, Scene, render, volume_ml
+    cam = FastCam.from_plane(CAMERA, PLANE)
+    sc = Scene()
+    m = sc.mat(Mat())
+    top = 0.04
+    sc.add(Prim("rbox", (0.05, 0.05, top / 2, 0.002), (0.5, 0.0, top / 2), mat=m, obj=0, bound=0.08))
+    r = render(sc, cam, spp=1)
+    (px, py), z = cam.project((0.5, 0.0, top))
+    assert int(r["id"][int(py), int(px)]) == 0
+    assert float(r["depth"][int(py), int(px)]) == pytest.approx(z, abs=3e-3)
+    assert volume_ml(sc, (0.5, 0.0), 0.08, 0.06) == pytest.approx(0.1 * 0.1 * 0.04 * 1e6, rel=0.03)
