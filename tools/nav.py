@@ -21,6 +21,16 @@ nav.py — маршрут объезда для робота-уборщика Su
     --submission submission.csv                 ответ модели в формате кейса (рамки и take)
     (ничего)                                    только геометрия: всё, что торчит, — препятствие
 
+Проверка по разметке (сколько тяжёлых задели, сколько лёгких убрали):
+    python nav.py --data dataset --frames-glob "real/train/*" --submission val_pred.csv \
+                  --gt-labels dataset/labels/real_train.json --avoid-mass-g 350 --out nav_eval
+
+Режим осторожности:
+    --avoid-mass-g 350   объезжать всё, что по оценке модели тяжелее 350 г, даже если take=1.
+                         Наезд на тяжёлое опаснее, чем пропущенный лёгкий предмет, а оценка массы
+                         ошибается (объём, материал → плотность). Порог ниже 500 г — запас на эти ошибки.
+                         take=0 объезжается всегда. Без параметра решение берётся только из take.
+
 Примеры:
     python nav.py --data dataset --frames real/train/r_0001 --labels dataset/labels/real_train.json --out nav_out
     python nav.py --data dataset --frames real/test/r_0008 real/test/r_0011 --submission submission.csv --out nav_out
@@ -546,7 +556,7 @@ def draw_bev(hm, observed, fov, objects, infl, path_cells, scale=3):
 
 
 # ---------------------------------------------------------------- один кадр
-def process_frame(frame_dir, cam, objs, robot_w, margin):
+def process_frame(frame_dir, cam, objs, robot_w, margin, avoid_mass_g=None, gt_objs=None):
     color = cv2.imread(str(frame_dir / "color.png"))
     depth = cv2.imread(str(frame_dir / "depth.png"), cv2.IMREAD_UNCHANGED)
     meta = json.loads((frame_dir / "meta.json").read_text(encoding="utf-8"))
@@ -565,10 +575,16 @@ def process_frame(frame_dir, cam, objs, robot_w, margin):
             continue
         kind = KIND_TAKE if o["take"] == 1 else KIND_AVOID
         note = o.get("label", "")
-        if o.get("mass") is not None:
-            note += f", ~{o['mass']:.0f} г"
+        mass = o.get("mass")
+        if mass is not None:
+            note += f", ~{mass:.0f} г"
+        safety = False
+        if (kind == KIND_TAKE and avoid_mass_g is not None and mass is not None
+                and np.isfinite(mass) and mass > avoid_mass_g):
+            kind, safety = KIND_AVOID, True
+            note += f" (запас: >{avoid_mass_g:.0f} г)"
         objects.append({"kind": kind, "footprint": fp, "pixels": pix, "note": note, "height_m": hmax,
-                        "source": o})
+                        "source": o, "safety": safety})
         known |= fp
 
     # неопознанные выступы: всё, что выше OBST_H и не принадлежит найденным объектам
@@ -653,10 +669,26 @@ def process_frame(frame_dir, cam, objs, robot_w, margin):
 
     report = {
         "frame": frame_dir.name, "status": status, "robot_width_m": robot_w, "margin_m": margin,
+        "avoid_mass_g": avoid_mass_g,
         "path_floor_m": [[round(a, 3), round(b, 3)] for a, b in path_ab] if path_ab else [],
         "path_length_m": round(float(sum(math.dist(p, q) for p, q in zip(path_ab[:-1], path_ab[1:]))), 3) if path_ab else 0.0,
         "objects": [],
     }
+    # проверка по истинной разметке: задели ли тяжёлые, убрали ли лёгкие
+    if gt_objs is not None:
+        ev = []
+        for g in gt_objs:
+            pix = object_pixels(g, depth, hpix)
+            fp, _ = object_footprint(pix, depth, floor, cam)
+            if not fp.any():
+                continue
+            cov = float((fp & (swath > 0)).sum() / max(fp.sum(), 1))
+            heavy = int(g["take"]) == 0
+            ev.append({"truth": "тяжёлый" if heavy else "лёгкий", "label": g.get("label", ""),
+                       "mass_g": g.get("mass"), "covered": round(cov, 2),
+                       "outcome": ("НАЕЗД" if cov > 0.05 else "объехал") if heavy else
+                                  ("убрал" if cov >= 0.6 else "не убрал")})
+        report["gt_eval"] = ev
     for o in objects:
         ii, jj = np.nonzero(o["footprint"])
         a, b = cell_center(ii.mean(), jj.mean())
@@ -664,7 +696,8 @@ def process_frame(frame_dir, cam, objs, robot_w, margin):
             "decision": RU[o["kind"]], "kind": o["kind"], "note": o["note"],
             "center_floor_m": [round(a, 3), round(b, 3)], "footprint_cm2": int(o["footprint"].sum()),
             "height_cm": (round(o["height_m"] * 100, 1) if np.isfinite(o["height_m"]) else None),
-            "covered_by_robot": round(o["coverage"], 2) if "coverage" in o else None, "status": o.get("status", "объезд")})
+            "covered_by_robot": round(o["coverage"], 2) if "coverage" in o else None,
+            "avoided_by_safety_margin": bool(o.get("safety", False)), "status": o.get("status", "объезд")})
     return panel, report
 
 
@@ -677,6 +710,10 @@ def main():
     ap.add_argument("--submission", default=None, help="ответ модели в формате кейса")
     ap.add_argument("--robot-width", type=float, default=0.40, help="ширина робота, м")
     ap.add_argument("--margin", type=float, default=0.05, help="запас до препятствия, м")
+    ap.add_argument("--avoid-mass-g", type=float, default=None,
+                    help="режим осторожности: объезжать всё тяжелее этого (г), даже при take=1")
+    ap.add_argument("--gt-labels", default=None,
+                    help="истинная разметка для проверки: доля задетых тяжёлых и убранных лёгких")
     ap.add_argument("--out", default="nav_out")
     args = ap.parse_args()
 
@@ -692,16 +729,36 @@ def main():
         src = objects_from_submission(args.submission)
     else:
         src = {}
+    gt = objects_from_labels(args.gt_labels) if args.gt_labels else None
     reports = []
     for fdir in frames:
-        panel, rep = process_frame(fdir, cam, src.get(fdir.name, []), args.robot_width, args.margin)
+        panel, rep = process_frame(fdir, cam, src.get(fdir.name, []), args.robot_width, args.margin,
+                                   args.avoid_mass_g, gt.get(fdir.name, []) if gt is not None else None)
         cv2.imwrite(str(out / f"{fdir.name}_nav.jpg"), panel, [cv2.IMWRITE_JPEG_QUALITY, 88])
         reports.append(rep)
         kinds = defaultdict(int)
         for o in rep["objects"]:
             kinds[o["decision"]] += 1
+        extra = sum(o["avoided_by_safety_margin"] for o in rep["objects"])
         print(f"{fdir.name}: {rep['status']} | путь {rep['path_length_m']} м | " +
-              ", ".join(f"{k}: {v}" for k, v in kinds.items()))
+              ", ".join(f"{k}: {v}" for k, v in kinds.items()) + (f" | по запасу массы: {extra}" if extra else ""))
+    if gt is not None:
+        ev = [e for r in reports for e in r.get("gt_eval", [])]
+        heavy = [e for e in ev if e["truth"] == "тяжёлый"]
+        light = [e for e in ev if e["truth"] == "лёгкий"]
+        hit = sum(e["outcome"] == "НАЕЗД" for e in heavy)
+        got = sum(e["outcome"] == "убрал" for e in light)
+        stops = sum(r["status"].startswith("стоп") for r in reports)
+        summary = {"frames": len(reports), "heavy_total": len(heavy), "heavy_hit": hit,
+                   "heavy_hit_rate": round(hit / len(heavy), 3) if heavy else None,
+                   "light_total": len(light), "light_collected": got,
+                   "light_collected_rate": round(got / len(light), 3) if light else None,
+                   "frames_stopped": stops}
+        (out / "nav_eval.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
+        print("Проверка по разметке:",
+              f"тяжёлых задето {hit}/{len(heavy)}" + (f" ({hit / len(heavy):.0%})" if heavy else ""),
+              f"| лёгких убрано {got}/{len(light)}" + (f" ({got / len(light):.0%})" if light else ""),
+              f"| остановок {stops}/{len(reports)}")
     (out / "nav_report.json").write_text(json.dumps(reports, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
