@@ -1,11 +1,14 @@
-"""Live polygon: the real-time renderer streamed to a browser (MJPEG) with interactive control.
+"""Live polygon: real-time renderer streamed to a browser (MJPEG), driven by the project's real model.
 
   python -m polygon.live --port 8790          # on the GPU server
   ssh -L 8790:localhost:8790 ...              # on the laptop, then open http://localhost:8790
 
-Mouse drag orbits the camera, wheel zooms, W/A/S/D drive the robot, Space drops new trash, R resets,
-V toggles the robot's D435 view. Light trash is swept when the robot drives over it; heavy trash
-(mass > 500 g) is marked AVOID.
+The robot's D435 frame (dataset intrinsics, RealSense depth model, dataset meta.json) goes through
+inference.predictor.predict_frame: detector + attribute model + parts volume. The autopilot drives to
+what the model calls TAKE and around what it calls AVOID; collisions with truly heavy trash are counted.
+
+Mouse drag orbits, wheel zooms, W/A/S/D drive, P autopilot, V model view, G ground truth labels,
+Space drops trash, R resets.
 """
 from __future__ import annotations
 
@@ -25,6 +28,7 @@ from .fast_scene import add_robot, random_trash, robot_camera
 from .fastrt import FastCam, FloorTex, Scene, render, to_u8
 
 TILE = Path(__file__).resolve().parent / "assets/floor_tile.png"
+WHEEL_R, TRACK = 0.085, 0.27
 
 PAGE = """<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Полигон в реальном времени</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -33,11 +37,13 @@ PAGE = """<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>По
 #h{position:fixed;left:14px;bottom:14px;background:rgba(18,20,22,.85);border:1px solid rgba(255,255,255,.1);
 border-radius:8px;padding:8px 12px;line-height:1.6}#h b{color:#fff}</style></head><body>
 <img id="v" src="/stream" draggable="false">
-<div id="h"><b>Полигон Astramis</b> · свой рендер на GPU, кадр считается целиком в CUDA<br>
-мышь — камера, колесо — зум, <b>W A S D</b> — робот, <b>пробел</b> — новый мусор, <b>V</b> — вид камеры робота, <b>R</b> — сброс</div>
+<div id="h"><b>Полигон Astramis</b> · свой рендер на GPU + наша модель (детектор, атрибуты, объём)<br>
+мышь — камера, колесо — зум, <b>W A S D</b> — робот, <b>P</b> — автопилот по модели, <b>V</b> — что видит модель,
+<b>G</b> — истина, <b>пробел</b> — мусор, <b>R</b> — сброс</div>
 <script>
 const keys={w:0,a:0,s:0,d:0};let orbit={daz:0,del:0,dz:0},drag=null,act=null;
-addEventListener('keydown',e=>{const k=e.key.toLowerCase();if(k in keys)keys[k]=1;if(k===' ')act='spawn';if(k==='r')act='reset';if(k==='v')act='view';});
+addEventListener('keydown',e=>{const k=e.key.toLowerCase();if(k in keys)keys[k]=1;
+ if(k===' ')act='spawn';if(k==='r')act='reset';if(k==='v')act='view';if(k==='p')act='auto';if(k==='g')act='gt';});
 addEventListener('keyup',e=>{const k=e.key.toLowerCase();if(k in keys)keys[k]=0;});
 const v=document.getElementById('v');
 v.addEventListener('mousedown',e=>{drag=[e.clientX,e.clientY];v.style.cursor='grabbing'});
@@ -48,25 +54,42 @@ setInterval(()=>{fetch('/input',{method:'POST',body:JSON.stringify({keys,orbit,a
 </script></body></html>"""
 
 
+def chip(img, txt, x, y, col, scale=0.42):
+    (tw, th), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)
+    x0, y0 = int(x - tw / 2), int(y)
+    cv2.rectangle(img, (x0 - 4, y0 - th - 6), (x0 + tw + 4, y0 + 3), (22, 22, 24), -1)
+    cv2.rectangle(img, (x0 - 4, y0 - th - 6), (x0 + tw + 4, y0 + 3), col, 1)
+    cv2.putText(img, txt, (x0, y0 - 2), cv2.FONT_HERSHEY_SIMPLEX, scale, (235, 235, 235), 1, cv2.LINE_AA)
+
+
 class Live:
-    def __init__(self, W, H, spp, fps):
+    def __init__(self, W, H, spp, fps, perception=None):
         self.W, self.H, self.spp, self.fps = W, H, spp, fps
         self.floor = FloorTex(TILE)
         self.rng = np.random.default_rng(0)
         self.lock = threading.Lock()
         self.keys = {"w": 0, "a": 0, "s": 0, "d": 0}
-        self.az, self.el, self.dist = math.pi + 0.6, 0.55, 2.0
+        self.az, self.el, self.dist = math.pi + 0.6, 0.55, 2.2
         self.robot_view = False
+        self.show_gt = False
+        self.auto = False
         self.jpeg = None
         self.frame_ms = 0.0
+        self.perc = perception
+        self.perc_busy = False
+        self.dets = []
         self.reset()
 
+    # ---------------------------------------------------------------- world
     def reset(self):
         self.x, self.y, self.yaw = 0.0, 0.0, 0.0
+        self.wl = self.wr = 0.0
         self.trash = []
-        for _ in range(7):
+        for _ in range(8):
             self.spawn(near=False)
         self.collected = 0
+        self.collisions = 0
+        self.dets = []
 
     def spawn(self, near=True):
         t = random_trash(self.rng)
@@ -77,7 +100,7 @@ class Live:
             else:
                 px, py = self.rng.uniform(0.6, 3.5), self.rng.uniform(-1.0, 1.0)
             if all(math.hypot(px - o[1], py - o[2]) > t.radius + o[0].radius + 0.05 for o in self.trash):
-                self.trash.append([t, px, py, float(self.rng.uniform(0, 6.28)), -1])
+                self.trash.append([t, px, py, float(self.rng.uniform(0, 6.28)), -1, False])
                 return
 
     def handle(self, msg):
@@ -95,56 +118,111 @@ class Live:
                 self.reset()
             elif act == "view":
                 self.robot_view = not self.robot_view
+            elif act == "gt":
+                self.show_gt = not self.show_gt
+            elif act == "auto":
+                self.auto = not self.auto
 
+    def autopilot(self):
+        """Steer to the nearest model-TAKE detection ahead; veer away from model-AVOID ones."""
+        c, s = math.cos(self.yaw), math.sin(self.yaw)
+        best, w_avoid = None, 0.0
+        for d in self.dets:
+            dx, dy = d["world"][0] - self.x, d["world"][1] - self.y
+            fwd, lat = c * dx + s * dy, -s * dx + c * dy
+            if d["take"] and fwd > 0.15 and abs(math.atan2(lat, fwd)) < 1.2:
+                dist = math.hypot(fwd, lat)
+                if best is None or dist < best[0]:
+                    best = (dist, math.atan2(lat, fwd))
+            if not d["take"] and 0 < fwd < 0.9 and abs(lat) < 0.42:
+                w_avoid += (-1.0 if lat > 0 else 1.0) * 1.8 * (1 - fwd / 0.9)
+        if best is None:
+            return 0.12, 0.55 + w_avoid
+        return 0.32, max(-1.6, min(1.6, 2.2 * best[1])) + w_avoid
+
+    # ---------------------------------------------------------------- frame
     def step(self, dt, frame):
         with self.lock:
-            v = 0.5 * (self.keys["w"] - self.keys["s"])
-            w = 1.6 * (self.keys["a"] - self.keys["d"])
+            if self.auto and not any(self.keys.values()):
+                v, w = self.autopilot()
+            else:
+                v = 0.5 * (self.keys["w"] - self.keys["s"])
+                w = 1.6 * (self.keys["a"] - self.keys["d"])
             self.yaw += w * dt
             self.x += v * math.cos(self.yaw) * dt
             self.y += v * math.sin(self.yaw) * dt
+            self.wl += (v - w * TRACK) * dt / WHEEL_R
+            self.wr += (v + w * TRACK) * dt / WHEEL_R
             fx, fy = self.x + 0.42 * math.cos(self.yaw), self.y + 0.42 * math.sin(self.yaw)
             for o in self.trash:
-                t, px, py, yaw, gone = o
-                if gone < 0 and t.take and math.hypot(px - fx, py - fy) < 0.22:
+                t, px, py, yaw, gone, hit = o
+                near = math.hypot(px - fx, py - fy) < 0.22
+                if gone < 0 and t.take and near:
                     o[4] = frame
                     self.collected += 1
+                if not t.take and near and not hit:
+                    o[5] = True
+                    self.collisions += 1
             self.trash = [o for o in self.trash if o[4] < 0 or frame - o[4] < 8]
             sc = Scene()
-            add_robot(sc, self.x, self.y, self.yaw, brush_angle=frame * 0.35 * (1 + abs(v)))
-            vis = []
-            for k, (t, px, py, yaw, gone) in enumerate(self.trash):
+            add_robot(sc, self.x, self.y, self.yaw, brush_angle=frame * 0.35 * (1 + abs(v)), wheel_angle=(self.wl, self.wr))
+            vis, props = [], {}
+            for k, (t, px, py, yaw, gone, hit) in enumerate(self.trash):
                 if gone >= 0:
                     a = (frame - gone) / 8
                     px, py = px + (self.x - px) * a, py + (self.y - py) * a
                 t.place(sc, px, py, yaw, k)
+                props[k] = {"transmission": t.mat.transmission, "metallic": t.mat.metallic, "roughness": t.mat.roughness}
                 if gone < 0:
-                    vis.append((t, px, py))
-            if self.robot_view:
-                e, tg = robot_camera(self.x, self.y, self.yaw)
-                cam = FastCam.look_at(e, tg, W=self.W, H=self.H, fov_deg=70)
-            else:
-                cx, cy = self.x + 0.3 * math.cos(self.yaw), self.y + 0.3 * math.sin(self.yaw)
-                eye = (cx + self.dist * math.cos(self.el) * math.cos(self.az), cy + self.dist * math.cos(self.el) * math.sin(self.az),
-                       0.15 + self.dist * math.sin(self.el))
-                cam = FastCam.look_at(eye, (cx, cy, 0.15), W=self.W, H=self.H, fov_deg=55)
+                    vis.append((t, px, py, hit))
+            eye_r, tgt_r = robot_camera(self.x, self.y, self.yaw)
+            cx, cy = self.x + 0.3 * math.cos(self.yaw), self.y + 0.3 * math.sin(self.yaw)
+            eye = (cx + self.dist * math.cos(self.el) * math.cos(self.az), cy + self.dist * math.cos(self.el) * math.sin(self.az),
+                   0.15 + self.dist * math.sin(self.el))
+            cam = FastCam.look_at(eye, (cx, cy, 0.15), W=self.W, H=self.H, fov_deg=55)
+            dets = list(self.dets)
+        # model: capture the robot's D435 frame when the worker is free
+        if self.perc is not None and not self.perc_busy:
+            self.perc_busy = True
+            inputs = self.perc.capture(sc, eye_r, tgt_r, props, frame, self.floor)
+            threading.Thread(target=self._perceive, args=(inputs,), daemon=True).start()
         torch.cuda.synchronize()
         t0 = time.time()
-        img = to_u8(render(sc, cam, floor=self.floor, spp=self.spp, seed=frame)["rgb"])
+        if self.robot_view and self.perc is not None and self.perc.latest is not None:
+            from .perception import overlay
+            img = overlay(self.perc.latest["frame"], self.perc.latest["dets"], self.W, self.H)
+        else:
+            img = to_u8(render(sc, cam, floor=self.floor, spp=self.spp, seed=frame)["rgb"])
+            for d in dets:
+                (sx, sy), z = cam.project((d["world"][0], d["world"][1], d["top"] + 0.06))
+                if z > 0 and 0 < sx < self.W and 0 < sy < self.H:
+                    chip(img, f"model: {d['material']} {d['volume']:.0f} ml {d['mass']:.0f} g {'TAKE' if d['take'] else 'AVOID'}",
+                         sx, sy, (110, 220, 120) if d["take"] else (80, 80, 245))
+            if self.show_gt:
+                for t, px, py, hit in vis:
+                    (sx, sy), z = cam.project((px, py, 0.0))
+                    if z > 0 and 0 < sx < self.W and 0 < sy < self.H:
+                        chip(img, f"true: {t.material} {t.volume_ml:.0f} ml {t.mass_g:.0f} g {'TAKE' if t.take else 'AVOID'}",
+                             sx, sy + 18, (200, 200, 200), 0.38)
         self.frame_ms = 0.9 * self.frame_ms + 0.1 * (time.time() - t0) * 1000
-        for t, px, py in vis:
-            (sx, sy), z = cam.project((px, py, t.height + 0.05))
-            if z > 0 and 0 < sx < self.W and 0 < sy < self.H:
-                txt = f"{t.material} {t.volume_ml:.0f} ml {t.mass_g:.0f} g {'TAKE' if t.take else 'AVOID'}"
-                (tw, th), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
-                x0, y0 = int(sx - tw / 2), int(sy)
-                cv2.rectangle(img, (x0 - 4, y0 - th - 6), (x0 + tw + 4, y0 + 3), (22, 22, 24), -1)
-                cv2.rectangle(img, (x0 - 4, y0 - th - 6), (x0 + tw + 4, y0 + 3), (110, 220, 120) if t.take else (80, 80, 245), 1)
-                cv2.putText(img, txt, (x0, y0 - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (235, 235, 235), 1, cv2.LINE_AA)
-        cv2.putText(img, f"render {self.frame_ms:.1f} ms ({1000 / max(self.frame_ms, 0.1):.0f} FPS)  {self.W}x{self.H} spp{self.spp}"
-                         f"  collected {self.collected}", (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+        lat = self.perc.latest["latency_ms"] if self.perc is not None and self.perc.latest else 0
+        model = self.perc.name if self.perc is not None else "no model"
+        cv2.putText(img, f"render {self.frame_ms:.1f} ms  |  model {lat:.0f} ms  |  collected {self.collected}  "
+                         f"collisions {self.collisions}  |  autopilot {'ON' if self.auto else 'off'}",
+                    (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(img, model, (12, 46), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1, cv2.LINE_AA)
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 82])
         self.jpeg = buf.tobytes()
+
+    def _perceive(self, inputs):
+        try:
+            dets = self.perc.run(*inputs, rng=np.random.default_rng())
+            with self.lock:
+                self.dets = dets
+        except Exception as e:  # keep the loop alive; show the error in the log
+            print("perception error:", repr(e), flush=True)
+        finally:
+            self.perc_busy = False
 
     def loop(self):
         frame, last = 0, time.time()
@@ -172,7 +250,8 @@ def serve(live: Live, port: int):
                     while True:
                         j = live.jpeg
                         if j is not None and j is not last:
-                            self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(j)).encode() + b"\r\n\r\n" + j + b"\r\n")
+                            self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(j)).encode()
+                                             + b"\r\n\r\n" + j + b"\r\n")
                             last = j
                         time.sleep(0.005)
                 except (BrokenPipeError, ConnectionResetError):
@@ -203,11 +282,17 @@ def main():
     ap.add_argument("--H", type=int, default=540)
     ap.add_argument("--spp", type=int, default=2)
     ap.add_argument("--fps", type=int, default=30)
+    ap.add_argument("--no-model", action="store_true")
+    ap.add_argument("--run", default="score83_cv_fold2_noval18")
     args = ap.parse_args()
-    live = Live(args.W, args.H, args.spp, args.fps)
+    perc = None
+    if not args.no_model:
+        from .perception import Perception
+        perc = Perception(run=args.run)
+    live = Live(args.W, args.H, args.spp, args.fps, perc)
     live.step(0.0, 0)
     threading.Thread(target=live.loop, daemon=True).start()
-    print(f"live polygon on http://127.0.0.1:{args.port}", flush=True)
+    print(f"live polygon on http://127.0.0.1:{args.port}  model: {perc.name if perc else 'none'}", flush=True)
     serve(live, args.port)
 
 

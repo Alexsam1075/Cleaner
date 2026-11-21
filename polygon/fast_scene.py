@@ -17,10 +17,10 @@ CAM_POS = (HX + 0.045, 0.0, 0.25)
 CAM_PITCH_DEG = 30.0
 
 
-def add_robot(sc: Scene, x: float, y: float, yaw: float, brush_angle: float = 0.0):
+def add_robot(sc: Scene, x: float, y: float, yaw: float, brush_angle: float = 0.0, wheel_angle: float = 0.0):
     m_body = sc.mat(Mat(WHITE, RED, 0.35, texture="robot", clearcoat=0.5))
     m_black = sc.mat(Mat(BLACK, roughness=0.6, texture="fbm", tex_scale=200, tex_amp=0.3))
-    m_rubber = sc.mat(Mat(BLACK, roughness=0.85, texture="fbm", tex_scale=300, tex_amp=0.4))
+    m_rubber = sc.mat(Mat((0.02, 0.02, 0.022), roughness=0.85, texture="wheel"))
     m_red = sc.mat(Mat(RED, roughness=0.4, clearcoat=0.5))
     m_glossy = sc.mat(Mat((0.04, 0.045, 0.05), roughness=0.15, clearcoat=1.0))
     m_bristle = sc.mat(Mat((0.03, 0.03, 0.035), roughness=0.75, texture="bristle"))
@@ -36,10 +36,12 @@ def add_robot(sc: Scene, x: float, y: float, yaw: float, brush_angle: float = 0.
         Prim("rcyl", (0.022, 0.016, 0.008), (-0.21, -0.15, TOP + 0.016), mat=m_red, bound=0.03),
         Prim("rbox", (0.06, 0.17, 0.09, 0.012), (-HX - 0.06, 0, 0.12), mat=m_white, bound=0.21),
     ]
+    wl, wr = (wheel_angle, wheel_angle) if not isinstance(wheel_angle, (tuple, list)) else wheel_angle
     for wx in (-0.2, 0.2):
         for s in (-1, 1):
-            parts.append(Prim("rcyl", (0.085, 0.03, 0.012), (wx, s * (HY + 0.03), 0.085), rot=rot_x(math.pi / 2),
-                              mat=m_rubber, bound=0.095))
+            ang = wl if s > 0 else wr
+            parts.append(Prim("rcyl", (0.085, 0.03, 0.012), (wx, s * (HY + 0.03), 0.085),
+                              rot=rot_x(math.pi / 2) @ rot_z(-ang), mat=m_rubber, bound=0.095))
     for s in (-1, 1):
         bx, by = HX + 0.10, s * 0.15
         parts.append(Prim("rcyl", (0.16, 0.022, 0.01), (bx, by, 0.025), rot=rot_z(brush_angle * s), mat=m_bristle,

@@ -19,7 +19,7 @@ DEV = torch.device("cuda")
 HERE = Path(__file__).resolve().parent
 PS, MS = 32, 24
 TYPES = {"sphere": 0, "rbox": 1, "rcyl": 2, "capsule": 3, "ellipsoid": 4, "torus": 5}
-TEXTURES = {"plain": 0, "fbm": 1, "stone": 2, "wood": 3, "brushed": 4, "paper": 5, "label": 6, "bristle": 7, "robot": 8}
+TEXTURES = {"plain": 0, "fbm": 1, "stone": 2, "wood": 3, "brushed": 4, "paper": 5, "label": 6, "bristle": 7, "robot": 8, "wheel": 9}
 
 
 # ---------------------------------------------------------------- NVRTC + driver
@@ -247,6 +247,18 @@ class FastCam:
         y = np.cross(z, x)
         f = 0.5 * W / math.tan(math.radians(fov_deg) / 2)
         return cls(f, f, W / 2, H / 2, W, H, eye, np.stack([x, y, z], 1))
+
+    @classmethod
+    def from_pose(cls, cam: dict, eye, target):
+        """Dataset intrinsics (camera.json) at a world pose: what the robot's D435 would record."""
+        c = cls.look_at(eye, target, W=cam["width"], H=cam["height"])
+        c.fx, c.fy, c.cx, c.cy = cam["fx"], cam["fy"], cam["cx"], cam["cy"]
+        return c
+
+    def floor_plane(self):
+        """Dataset-style floor plane in camera coordinates: n . X + d = 0, n toward the camera."""
+        up_c = self.R.T @ np.array([0.0, 0.0, 1.0])
+        return [float(v) for v in up_c] + [float(self.origin[2])]
 
     def project(self, p):
         q = (np.asarray(p, float) - self.origin) @ self.R

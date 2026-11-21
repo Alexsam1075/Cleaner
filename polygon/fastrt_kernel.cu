@@ -240,6 +240,16 @@ __device__ V albedo(const float* M, const float* P, V q) {
     float k = vnoise(v3(ang * 60.f, rr * 40.f, ang * 3.f)) * 0.5f + 0.5f;
     return c1 * (0.5f + 0.9f * k);
   }
+  if (tex == 9) {                      // wheel: tread pattern on the tyre, rim with five spokes on the sides
+    float rr = sqrtf(q.x * q.x + q.y * q.y), ang = atan2f(q.y, q.x), h = P[17];
+    if (fabsf(q.z) > h - 0.005f) {
+      if (rr < 0.016f) return v3(0.05f, 0.05f, 0.055f);
+      if (rr < 0.058f) return cosf(5.f * ang) > 0.45f ? v3(0.55f, 0.55f, 0.57f) : v3(0.12f, 0.12f, 0.13f);
+      if (rr < 0.064f) return v3(0.4f, 0.4f, 0.42f);
+      return c1;
+    }
+    return sinf(ang * 30.f) > 0.f ? c1 * 2.2f : c1 * 0.6f;
+  }
   // 8: robot body — white panels, red trim on edges, black star and red dot on the front
   float hx = P[16], hy = P[17], hz = P[18], e = 0.04f;
   int nearc = (fabsf(q.x) > hx - e) + (fabsf(q.y) > hy - e) + (fabsf(q.z) > hz - e);
@@ -358,7 +368,7 @@ extern "C" __global__ void render(
   if (mode == 1) {
     bgc = v3(bg[pix * 3], bg[pix * 3 + 1], bg[pix * 3 + 2]); bgz = bg_depth[pix]; bgflo = bg_floor[pix] > 0.5f || bgz == 0.f;
   }
-  V acc = v3(0, 0, 0); float cover = 0.f, zbest = 1e3f, specbest = 0.f; int idbest = -1;
+  V acc = v3(0, 0, 0); float cover = 0.f, zbest = 1e3f, specbest = 0.f, zfl = 0.f; int idbest = -1;
   V floor_acc = v3(0, 0, 0);
   for (int s = 0; s < spp; s++) {
     float jx = spp > 1 ? ((s & 1) ? 0.75f : 0.25f) : 0.5f, jy = spp > 1 ? ((s & 2) ? 0.75f : 0.25f) : 0.5f;
@@ -384,6 +394,7 @@ extern "C" __global__ void render(
       specbest = fmaxf(specbest, sp);
     } else if (mode == 0 && tfl < 1e3f) {       // CG floor
       V P = o + d * tfl;
+      if (zfl == 0.f) zfl = tfl * zf;
       float foot = tfl / C.fx / fmaxf(fabsf(d.z), 0.05f);
       V alb = floor_albedo(E.floor, fsx, fsy, P.x, P.y, foot);
       V l = nrm(light - P);
@@ -462,7 +473,7 @@ extern "C" __global__ void render(
   out_rgb[pix * 3] = col.x; out_rgb[pix * 3 + 1] = col.y; out_rgb[pix * 3 + 2] = col.z;
   out_cov[pix] = a;
   if (a >= 0.5f) { out_depth[pix] = zbest; out_id[pix] = idbest; out_spec[pix] = specbest; }
-  else { out_depth[pix] = mode == 1 ? bgz : 0.f; out_id[pix] = -1; out_spec[pix] = 0.f; }
+  else { out_depth[pix] = mode == 1 ? bgz : zfl; out_id[pix] = -1; out_spec[pix] = 0.f; }
 }
 
 // distance field on arbitrary points (volume integration, placement checks)
