@@ -39,8 +39,12 @@ def _iou(a, b) -> float:
 def rewrite_submission(df: pd.DataFrame, estimator: VolumeEstimator,
                        load_frame: Callable[[str], tuple[np.ndarray, np.ndarray]],
                        mask_for_box: Callable[[str, list[float]], np.ndarray],
-                       material_for: Callable[[str, list[float], str], str] | None = None) -> pd.DataFrame:
-    """Return a copy of ``df`` with tokens 8-9 (volume, mass) recomputed for every object."""
+                       material_for: Callable[[str, list[float], str], str] | None = None,
+                       take_threshold_g: float | None = None) -> pd.DataFrame:
+    """Return a copy of ``df`` with tokens 8-9 (volume, mass) recomputed for every object.
+
+    ``take_threshold_g`` also replaces take by ``mass <= threshold`` (mass = volume x class density).
+    """
     out = []
     for image_id, cell in zip(df["image_id"].astype(str), df["prediction"].astype(str)):
         if cell.strip().lower() in {"", "none"}:
@@ -54,7 +58,8 @@ def rewrite_submission(df: pd.DataFrame, estimator: VolumeEstimator,
             if material_for is not None:
                 material = material_for(image_id, box, material)
             r = estimator.estimate(depth, mask_for_box(image_id, box), plane, form, material)
-            parts.append(" ".join(tok[:7] + [f"{r.volume_ml:.2f}", f"{r.mass_g:.2f}", tok[9]]))
+            take = tok[9] if take_threshold_g is None else str(int(r.mass_g <= take_threshold_g))
+            parts.append(" ".join(tok[:7] + [f"{r.volume_ml:.2f}", f"{r.mass_g:.2f}", take]))
         out.append({"image_id": image_id, "prediction": ";".join(parts)})
     return pd.DataFrame(out, columns=["image_id", "prediction"])
 
@@ -138,6 +143,8 @@ def main() -> None:
     ap.add_argument("--imgsz", type=int, default=640)
     ap.add_argument("--labels", type=Path, default=None)
     ap.add_argument("--oracle-material", action="store_true")
+    ap.add_argument("--take-from-mass", type=float, default=None, metavar="G",
+                    help="replace take by mass <= G grams (mass = volume x class density)")
     ap.add_argument("--score-py", type=Path, default=Path(__file__).resolve().parents[1] / "references/score.py")
     args = ap.parse_args()
     if args.oracle_material and not args.labels:
@@ -152,7 +159,8 @@ def main() -> None:
         return depth, plane
 
     material_for = _gt_material_lookup(args.labels) if args.oracle_material else None
-    out = rewrite_submission(pd.read_csv(args.submission), est, load_frame, masks, material_for)
+    out = rewrite_submission(pd.read_csv(args.submission), est, load_frame, masks, material_for,
+                             args.take_from_mass)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(args.out, index=False)
     print(f"wrote {args.out}  masks matched={masks.matched} box_fallback={masks.fallback}")

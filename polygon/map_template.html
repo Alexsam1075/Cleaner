@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Полигон Astramis</title>
+<style>
+  :root {
+    --bg: #101214; --panel: rgba(20, 22, 25, 0.86); --line: rgba(255,255,255,0.09);
+    --text: #e9ebee; --muted: #9aa1a9; --take: #3ccf7a; --avoid: #ff5a4e; --accent: #4aa8ff;
+  }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 13px/1.45 "IBM Plex Sans", system-ui, -apple-system, Segoe UI, sans-serif; overflow: hidden; }
+  #view { position: fixed; inset: 0; }
+  .panel { position: fixed; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    backdrop-filter: blur(8px); }
+  #info { left: 16px; top: 16px; width: 300px; max-height: calc(100% - 120px); overflow: auto; padding: 14px 16px; }
+  #info h1 { font-size: 15px; margin: 0 0 2px; font-weight: 600; }
+  #info .sub { color: var(--muted); margin-bottom: 12px; }
+  .row { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; }
+  .row span:first-child { color: var(--muted); }
+  .obj { border-top: 1px solid var(--line); padding: 8px 0; }
+  .obj b { font-weight: 600; }
+  .tag { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .tag.take { background: rgba(60,207,122,.18); color: var(--take); }
+  .tag.avoid { background: rgba(255,90,78,.18); color: var(--avoid); }
+  .gt { color: var(--muted); font-size: 12px; }
+  .ok { color: var(--take); } .bad { color: var(--avoid); }
+  #photo { right: 16px; top: 16px; width: 336px; padding: 8px; }
+  #photo canvas { width: 320px; height: 180px; border-radius: 6px; display: block; }
+  #photo .cap { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  #bar { left: 50%; transform: translateX(-50%); bottom: 16px; padding: 10px 14px; display: flex; gap: 12px;
+    align-items: center; width: min(720px, calc(100% - 32px)); box-sizing: border-box; }
+  #bar button { background: #2a2e33; color: var(--text); border: 1px solid var(--line); border-radius: 7px;
+    padding: 6px 12px; font: inherit; cursor: pointer; }
+  #bar button:hover { background: #343941; }
+  #bar input[type=range] { flex: 1; accent-color: var(--accent); }
+  #bar .fid { color: var(--muted); min-width: 120px; text-align: right; font-variant-numeric: tabular-nums; }
+  #ckpt { right: 16px; bottom: 84px; width: 336px; padding: 10px 12px; font-size: 12px; }
+  #ckpt h2 { font-size: 13px; margin: 0 0 6px; font-weight: 600; }
+  .lbl { padding: 2px 7px; border-radius: 5px; background: rgba(15,16,18,.82); color: #fff; font-size: 11px;
+    white-space: nowrap; border: 1px solid rgba(255,255,255,.12); pointer-events: none; }
+  .lbl.take { border-color: rgba(60,207,122,.6); } .lbl.avoid { border-color: rgba(255,90,78,.7); }
+  @media (max-width: 760px) { #info { width: calc(100% - 32px); max-height: 32%; } #photo, #ckpt { display: none; } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+</script>
+</head>
+<body>
+<div id="view"></div>
+<div id="info" class="panel"></div>
+<div id="photo" class="panel"><canvas id="pc" width="640" height="360"></canvas><div class="cap" id="pcap"></div></div>
+<div id="ckpt" class="panel"></div>
+<div id="bar" class="panel">
+  <button id="play">Пуск</button>
+  <button id="drive">Проехать</button>
+  <input id="slider" type="range" min="0" value="0">
+  <div class="fid" id="fid"></div>
+</div>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
+
+const DATA = /*__DATA__*/null;
+const MAT_RU = { plastic: "пластик", metal: "металл", glass: "стекло", paper: "бумага", wood: "дерево", mineral: "минерал" };
+THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
+
+// ------------------------------------------------------------ renderer and scene
+const host = document.getElementById("view");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+host.appendChild(renderer.domElement);
+const labels = new CSS2DRenderer();
+labels.setSize(innerWidth, innerHeight);
+Object.assign(labels.domElement.style, { position: "fixed", inset: "0", pointerEvents: "none" });
+host.appendChild(labels.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1c1f);
+scene.fog = new THREE.Fog(0x1a1c1f, 5, 11);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.02, 50);
+camera.position.set(-1.6, -1.25, 1.15);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0.45, 0, 0.1);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI * 0.49;
+
+scene.add(new THREE.HemisphereLight(0xf4f6fa, 0x404040, 0.55));
+const sun = new THREE.DirectionalLight(0xfff6ea, 2.4);
+sun.position.set(1.2, -0.9, 2.8);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -2.5, right: 2.5, top: 2.5, bottom: -2.5, near: 0.5, far: 8 });
+sun.shadow.bias = -0.0004;
+sun.shadow.radius = 4;
+scene.add(sun);
+
+// floor with the tile texture rectified from a real empty frame
+const tileImg = new Image();
+tileImg.src = "data:image/jpeg;base64," + DATA.floor_tile;
+const tileTex = new THREE.Texture(tileImg);
+tileImg.onload = () => { tileTex.needsUpdate = true; };
+tileTex.colorSpace = THREE.SRGBColorSpace;
+tileTex.wrapS = tileTex.wrapT = THREE.MirroredRepeatWrapping;
+tileTex.anisotropy = 8;
+const FL = 14;
+tileTex.repeat.set(FL / 0.56, FL / 0.60);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(FL, FL),
+  new THREE.MeshStandardMaterial({ map: tileTex, roughness: 0.32, metalness: 0.0 }));
+floor.position.z = -0.003;
+floor.receiveShadow = true;
+scene.add(floor);
+
+// ------------------------------------------------------------ robot (same model as the renderer)
+const HX = 0.31, HY = 0.24, HZ = 0.20, BODY_Z = 0.37, TOP = BODY_Z + HZ;
+function canvasTex(w, h, draw) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  draw(c.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
+}
+const starTex = canvasTex(512, 384, (g, w, h) => {
+  g.fillStyle = "#e8e8e6"; g.fillRect(0, 0, w, h);
+  g.strokeStyle = "#141414"; g.lineWidth = 22; g.lineJoin = "round";
+  const cx = w * 0.47, cy = h * 0.52, R = h * 0.36;
+  g.beginPath();
+  for (let i = 0; i <= 5; i++) {
+    const a = -Math.PI / 2 + i * 4 * Math.PI / 5;
+    const x = cx + R * Math.cos(a), y = cy + R * Math.sin(a);
+    i ? g.lineTo(x, y) : g.moveTo(x, y);
+  }
+  g.stroke();
+  g.fillStyle = "#e3322a"; g.beginPath(); g.arc(cx + R * 1.25, cy - R * 0.15, 14, 0, 7); g.fill();
+});
+const bristleTex = canvasTex(512, 512, (g, w, h) => {
+  g.fillStyle = "#0b0b0c"; g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 2600; i++) {
+    const a = Math.random() * Math.PI * 2, r0 = 40 + Math.random() * 30, r1 = 200 + Math.random() * 56;
+    g.strokeStyle = `rgba(${60 + Math.random() * 50},${60 + Math.random() * 50},${65 + Math.random() * 50},0.7)`;
+    g.lineWidth = 1;
+    g.beginPath(); g.moveTo(w / 2 + r0 * Math.cos(a), h / 2 + r0 * Math.sin(a));
+    g.lineTo(w / 2 + r1 * Math.cos(a), h / 2 + r1 * Math.sin(a)); g.stroke();
+  }
+});
+const M = {
+  red: new THREE.MeshPhysicalMaterial({ color: 0xe3402f, roughness: 0.45, clearcoat: 0.3 }),
+  white: new THREE.MeshPhysicalMaterial({ color: 0xe9e9e6, roughness: 0.38, clearcoat: 0.6, clearcoatRoughness: 0.25 }),
+  black: new THREE.MeshStandardMaterial({ color: 0x141416, roughness: 0.7 }),
+  rubber: new THREE.MeshStandardMaterial({ color: 0x0e0e0f, roughness: 0.9 }),
+  glossy: new THREE.MeshPhysicalMaterial({ color: 0x0c0d0f, roughness: 0.15, clearcoat: 1 }),
+  orange: new THREE.MeshStandardMaterial({ color: 0xee4a1c, roughness: 0.5 }),
+  star: new THREE.MeshPhysicalMaterial({ map: starTex, roughness: 0.4, clearcoat: 0.5 }),
+  bristle: new THREE.MeshStandardMaterial({ map: bristleTex, roughness: 0.85, transparent: true }),
+};
+function mesh(geo, mat, x, y, z, parent) {
+  const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true;
+  parent.add(m); return m;
+}
+const robot = new THREE.Group();
+mesh(new RoundedBoxGeometry(2 * HX, 2 * HY, 2 * HZ, 6, 0.035), M.red, 0, 0, BODY_Z, robot);
+const inset = 0.04, th = 0.004;
+mesh(new RoundedBoxGeometry(2 * HX - 2 * inset, 2 * HY - 2 * inset, th, 2, 0.002), M.white, 0, 0, TOP + th / 2, robot);
+for (const s of [-1, 1]) {
+  const side = mesh(new RoundedBoxGeometry(2 * HX - 2 * inset, th, 2 * HZ - 2 * inset, 2, 0.002), M.white, 0, s * (HY + th / 2), BODY_Z, robot);
+}
+const front = mesh(new THREE.PlaneGeometry(2 * HY - 2 * inset, 2 * HZ - 2 * inset), M.star, HX + 0.001, 0, BODY_Z, robot);
+front.rotation.set(Math.PI / 2, Math.PI / 2, 0);
+mesh(new RoundedBoxGeometry(th, 2 * HY - 2 * inset, 2 * HZ - 2 * inset, 2, 0.002), M.white, -HX - th / 2, 0, BODY_Z, robot);
+mesh(new RoundedBoxGeometry(2 * HX + 0.04, 2 * HY + 0.03, 0.1, 4, 0.04), M.black, 0, 0, 0.12, robot);
+for (const wx of [-0.2, 0.2]) for (const s of [-1, 1]) {
+  const w = mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.06, 32), M.rubber, wx, s * (HY + 0.03), 0.085, robot);
+}
+mesh(new RoundedBoxGeometry(0.028, 0.2, 0.056, 3, 0.008), M.red, HX + 0.012, 0, 0.25, robot);
+mesh(new RoundedBoxGeometry(0.008, 0.09, 0.024, 2, 0.004), M.glossy, HX + 0.027, 0, 0.25, robot);
+const brushes = [];
+for (const s of [-1, 1]) {
+  const b = mesh(new THREE.CylinderGeometry(0.16, 0.14, 0.03, 48), M.bristle, HX + 0.10, s * 0.15, 0.022, robot);
+  b.rotation.x = Math.PI / 2; brushes.push([b, s]);
+  mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.05, 24), M.glossy, HX + 0.10, s * 0.15, 0.065, robot).rotation.x = Math.PI / 2;
+  const arm = mesh(new THREE.CapsuleGeometry(0.016, 0.16, 4, 12), M.black, HX + 0.03, s * 0.12, 0.11, robot);
+  arm.rotation.set(0, Math.PI / 2 - 0.35, s * 0.6);
+}
+mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.06, 32), M.glossy, 0.12, 0, TOP + 0.03, robot).rotation.x = Math.PI / 2;
+mesh(new RoundedBoxGeometry(0.26, 0.18, 0.012, 2, 0.004), M.glossy, -0.06, 0.02, TOP + 0.006, robot);
+mesh(new THREE.CylinderGeometry(0.022, 0.024, 0.03, 24), M.red, -0.21, -0.15, TOP + 0.016, robot).rotation.x = Math.PI / 2;
+mesh(new RoundedBoxGeometry(0.12, 0.34, 0.18, 3, 0.012), M.white, -HX - 0.06, 0, 0.12, robot);
+for (const ry of [-0.08, 0.08]) {
+  const t = mesh(new THREE.TorusGeometry(0.03, 0.009, 12, 32), M.orange, -HX - 0.122, ry, 0.11, robot);
+  t.rotation.y = Math.PI / 2;
+}
+// camera frustum of the D435 (pitch ~30°, 70° x 43°)
+const frustum = new THREE.Group();
+{
+  const len = 1.0, hw = Math.tan(35 * Math.PI / 180) * len, hh = Math.tan(21.5 * Math.PI / 180) * len;
+  const g = new THREE.BufferGeometry();
+  const P = [0, 0, 0, len, hw, hh, len, -hw, hh, len, -hw, -hh, len, hw, -hh];
+  g.setAttribute("position", new THREE.Float32BufferAttribute(P, 3));
+  g.setIndex([0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1]);
+  frustum.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x4aa8ff, transparent: true, opacity: 0.07, side: THREE.DoubleSide, depthWrite: false })));
+  frustum.add(new THREE.LineSegments(new THREE.EdgesGeometry(g), new THREE.LineBasicMaterial({ color: 0x4aa8ff, transparent: true, opacity: 0.45 })));
+  frustum.position.set(HX + 0.03, 0, 0.25);
+  frustum.rotation.y = 30 * Math.PI / 180;
+  robot.add(frustum);
+}
+scene.add(robot);
+
+// ------------------------------------------------------------ frames
+const [GW, GH] = DATA.grid;
+const cam = DATA.camera;
+let frameGroup = null, objGroup = null, pathLine = null, current = 0, drive = null;
+
+function decodeU16(b64) {
+  const s = atob(b64), buf = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) buf[i] = s.charCodeAt(i);
+  return new Uint16Array(buf.buffer);
+}
+function buildFrameMesh(f) {
+  const depth = decodeU16(f.depth), R = f.R, d = f.plane_d;
+  const pos = new Float32Array(GW * GH * 3), uv = new Float32Array(GW * GH * 2), valid = new Uint8Array(GW * GH);
+  for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) {
+    const k = j * GW + i, z = depth[k] / 1000;
+    const px = (i + 0.5) * cam.width / GW, py = (j + 0.5) * cam.height / GH;
+    const xc = (px - cam.cx) / cam.fx * z, yc = (py - cam.cy) / cam.fy * z;
+    pos[3 * k] = R[0][0] * xc + R[0][1] * yc + R[0][2] * z;
+    pos[3 * k + 1] = R[1][0] * xc + R[1][1] * yc + R[1][2] * z;
+    pos[3 * k + 2] = R[2][0] * xc + R[2][1] * yc + R[2][2] * z + d;
+    uv[2 * k] = (i + 0.5) / GW; uv[2 * k + 1] = 1 - (j + 0.5) / GH;
+    valid[k] = z > 0.15 && z < 2.6 ? 1 : 0;
+  }
+  const idx = [];
+  const near = (a, b) => Math.abs(depth[a] - depth[b]) < 40 + depth[a] * 0.03;
+  for (let j = 0; j < GH - 1; j++) for (let i = 0; i < GW - 1; i++) {
+    const a = j * GW + i, b = a + 1, c = a + GW, e = c + 1;
+    if (valid[a] && valid[b] && valid[c] && near(a, b) && near(a, c)) idx.push(a, c, b);
+    if (valid[b] && valid[c] && valid[e] && near(b, e) && near(c, e)) idx.push(b, c, e);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  const img = new Image(); img.src = "data:image/jpeg;base64," + f.img;
+  const tex = new THREE.Texture(img); img.onload = () => (tex.needsUpdate = true);
+  tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
+  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
+  return { mesh: m, img };
+}
+function label(text, cls) {
+  const el = document.createElement("div"); el.className = "lbl " + cls; el.textContent = text;
+  return new CSS2DObject(el);
+}
+function planPath(objs) {
+  const take = objs.filter(o => o.take).map(o => [(o.lo[0] + o.hi[0]) / 2, (o.lo[1] + o.hi[1]) / 2]);
+  const avoid = objs.filter(o => !o.take).map(o => [(o.lo[0] + o.hi[0]) / 2, (o.lo[1] + o.hi[1]) / 2,
+    Math.hypot(o.hi[0] - o.lo[0], o.hi[1] - o.lo[1]) / 2 + 0.28]);
+  take.sort((a, b) => a[0] - b[0]);
+  const pts = [[-0.33, 0]];
+  const goal = [...take, [take.length ? Math.max(...take.map(t => t[0])) + 0.5 : 1.4, 0]];
+  for (const g of goal) {
+    const p = pts[pts.length - 1];
+    for (const [ax, ay, ar] of avoid) {
+      const dx = g[0] - p[0], dy = g[1] - p[1], L = Math.hypot(dx, dy) || 1;
+      const t = Math.max(0, Math.min(1, ((ax - p[0]) * dx + (ay - p[1]) * dy) / (L * L)));
+      const cx = p[0] + t * dx, cy = p[1] + t * dy;
+      if (Math.hypot(ax - cx, ay - cy) < ar) {
+        const nx = -dy / L, ny = dx / L, s = ((cx - ax) * nx + (cy - ay) * ny) >= 0 ? 1 : -1;
+        pts.push([ax + s * nx * ar * 1.15, ay + s * ny * ar * 1.15]);
+      }
+    }
+    pts.push(g);
+  }
+  return pts;
+}
+function showFrame(i) {
+  current = i;
+  const f = DATA.frames[i];
+  if (frameGroup) scene.remove(frameGroup);
+  frameGroup = new THREE.Group();
+  const { mesh: fm, img } = buildFrameMesh(f);
+  frameGroup.add(fm);
+  objGroup = new THREE.Group();
+  for (const o of f.objects) {
+    const c = new THREE.Vector3(...o.lo).add(new THREE.Vector3(...o.hi)).multiplyScalar(0.5);
+    const s = new THREE.Vector3(...o.hi).sub(new THREE.Vector3(...o.lo));
+    const box = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(Math.max(s.x, 0.02), Math.max(s.y, 0.02), Math.max(s.z, 0.02))),
+      new THREE.LineBasicMaterial({ color: o.take ? 0x3ccf7a : 0xff5a4e }));
+    box.position.copy(c);
+    objGroup.add(box);
+    const l = label(`${MAT_RU[o.material] || o.material} · ${Math.round(o.volume)} мл · ${Math.round(o.mass)} г · ${o.take ? "забрать" : "объехать"}`, o.take ? "take" : "avoid");
+    l.position.set(c.x, c.y, o.hi[2] + 0.05);
+    objGroup.add(l);
+    o._group = box; o._label = l;
+  }
+  frameGroup.add(objGroup);
+  const pts = planPath(f.objects);
+  const curve = new THREE.CatmullRomCurve3(pts.map(p => new THREE.Vector3(p[0], p[1], 0.004)), false, "centripetal");
+  pathLine = new THREE.Mesh(new THREE.TubeGeometry(curve, 120, 0.008, 8, false),
+    new THREE.MeshBasicMaterial({ color: 0x4aa8ff, transparent: true, opacity: 0.85 }));
+  frameGroup.add(pathLine);
+  frameGroup.userData.curve = curve;
+  scene.add(frameGroup);
+  robot.position.set(-HX - 0.02, 0, 0); robot.rotation.set(0, 0, 0);
+  drive = null;
+  drawPhoto(f, img);
+  renderInfo(f);
+  slider.value = i;
+  document.getElementById("fid").textContent = `${f.id} · ${f.fold} · ${i + 1}/${DATA.frames.length}`;
+}
+function drawPhoto(f, img) {
+  const c = document.getElementById("pc"), g = c.getContext("2d");
+  const draw = () => {
+    g.drawImage(img, 0, 0, 640, 360);
+    const k = 640 / cam.width;
+    for (const o of f.objects) {
+      const [x1, y1, x2, y2] = o.box2d;
+      g.strokeStyle = o.take ? "#3ccf7a" : "#ff5a4e"; g.lineWidth = 3;
+      g.strokeRect(x1 * k, y1 * k, (x2 - x1) * k, (y2 - y1) * k);
+    }
+  };
+  img.complete ? draw() : (img.onload = () => { draw(); });
+  document.getElementById("pcap").textContent = `Кадр D435 · ${f.surface || ""} · ${f.lighting || ""}`;
+}
+function renderInfo(f) {
+  const el = document.getElementById("info");
+  let h = `<h1>Полигон Astramis</h1><div class="sub">Реальный кадр RGB-D в 3D, робот в позе камеры, решения лучшего пайплайна</div>`;
+  h += `<div class="row"><span>Кадр</span><span>${f.id}</span></div><div class="row"><span>Fold / веса</span><span>${f.fold}</span></div>`;
+  for (const o of f.objects) {
+    const g = o.gt;
+    const ok = g && g.material === o.material, tk = g && g.take === o.take;
+    h += `<div class="obj"><b>${MAT_RU[o.material] || o.material}</b>, ${o.form === "bulk" ? "россыпь" : "цельный"} ` +
+      `<span class="tag ${o.take ? "take" : "avoid"}">${o.take ? "забрать" : "объехать"}</span><br>` +
+      `${Math.round(o.volume)} мл · ${Math.round(o.mass)} г · уверенность ${o.score.toFixed(2)}`;
+    if (g) h += `<div class="gt">Разметка ${g.object_id}: <span class="${ok ? "ok" : "bad"}">${MAT_RU[g.material]}</span>, ` +
+      `${Math.round(g.volume)} мл, ${Math.round(g.mass)} г, <span class="${tk ? "ok" : "bad"}">${g.take ? "забрать" : "объехать"}</span></div>`;
+    else h += `<div class="gt">нет совпадения с разметкой</div>`;
+    h += `</div>`;
+  }
+  el.innerHTML = h;
+}
+function renderCkpt() {
+  const el = document.getElementById("ckpt");
+  let h = `<h2>Лучшие чекпоинты</h2>`;
+  for (const [k, v] of Object.entries(DATA.pipeline)) h += `<div class="row"><span>${k}</span><span>${v}</span></div>`;
+  for (const [fold, m] of Object.entries(DATA.metrics))
+    h += `<div class="row"><span>${fold}</span><span>Score ${m.Score.toFixed(2)} · D ${m.D.toFixed(2)} · M ${m.M.toFixed(2)} · V ${m.V.toFixed(2)} · S ${m.S.toFixed(2)}</span></div>`;
+  el.innerHTML = h;
+}
+
+// ------------------------------------------------------------ controls and loop
+const slider = document.getElementById("slider");
+slider.max = DATA.frames.length - 1;
+slider.oninput = () => showFrame(+slider.value);
+let playing = false, lastSwitch = 0;
+document.getElementById("play").onclick = (e) => { playing = !playing; e.target.textContent = playing ? "Пауза" : "Пуск"; startDrive(); };
+document.getElementById("drive").onclick = () => startDrive();
+function startDrive() { drive = { t0: performance.now(), dur: 4200 }; }
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight); labels.setSize(innerWidth, innerHeight);
+});
+renderCkpt();
+showFrame(0);
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = clock.getDelta();
+  for (const [b, s] of brushes) b.rotation.y += s * dt * 9;
+  if (drive && frameGroup) {
+    const u = Math.min(1, (performance.now() - drive.t0) / drive.dur);
+    const curve = frameGroup.userData.curve;
+    const p = curve.getPointAt(u), tng = curve.getTangentAt(Math.min(u, 0.999));
+    robot.position.set(p.x - Math.cos(Math.atan2(tng.y, tng.x)) * (HX + 0.02), p.y - Math.sin(Math.atan2(tng.y, tng.x)) * (HX + 0.02), 0);
+    robot.rotation.z = Math.atan2(tng.y, tng.x);
+    for (const o of DATA.frames[current].objects) {
+      if (!o.take || !o._group) continue;
+      const c = [(o.lo[0] + o.hi[0]) / 2, (o.lo[1] + o.hi[1]) / 2];
+      if (Math.hypot(c[0] - p.x, c[1] - p.y) < 0.12) { o._group.visible = false; o._label.visible = false; }
+    }
+    if (u >= 1) {
+      drive = null;
+      if (playing) setTimeout(() => { showFrame((current + 1) % DATA.frames.length); startDrive(); }, 600);
+    }
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  labels.render(scene, camera);
+});
+</script>
+</body>
+</html>

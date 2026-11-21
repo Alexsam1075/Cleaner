@@ -15,3 +15,4 @@ submissions/
 *.pem
 .ssh/
 .superpowers/
+polygon_out/

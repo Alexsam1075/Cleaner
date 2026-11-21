@@ -64,3 +64,11 @@ def test_rewrite_submission_swaps_only_volume_and_mass(est, scene):
     assert tok[:7] == ["10.0", "20.0", "30.0", "40.0", "0.90000", "solid", "plastic"] and tok[9] == "1"
     assert float(tok[7]) != 123.0 and float(tok[8]) == pytest.approx(float(tok[7]) * 0.279, rel=1e-3)
     assert out.loc[1, "prediction"] == "none"
+
+
+def test_rewrite_submission_take_from_mass(est, scene):
+    depth, mask = scene
+    df = pd.DataFrame({"image_id": ["r_a"], "prediction": ["10.0 20.0 30.0 40.0 0.90000 solid metal 123.00 45.00 1"]})
+    out = rewrite_submission(df, est, lambda iid: (depth, PLANE), lambda iid, box: mask, take_threshold_g=1.0)
+    tok = out.loc[0, "prediction"].split()
+    assert float(tok[8]) > 1.0 and tok[9] == "0"          # mass above the threshold -> heavy -> take 0
