@@ -1,74 +1,131 @@
-# Astramis RGB-D model
+<div align="center">
 
-This directory contains an independent first-pass detector and object attribute pipeline. The original `baseline.ipynb`, `score.py`, label files, and source images remain untouched.
+# Cleaner — что под щёткой
 
-## Data findings
+**Робот-уборщик Astramis: по одному кадру RGB-D находит мусор и решает, что забрать, а что объехать**
 
-Run the audit from the workspace root (or `python -m datasets.audit` from this project directory):
+Хакатон ЦУ · RealSense D435 · YOLO11-seg + RGB-D атрибуты · свой рендер реального времени на CUDA
 
-```powershell
-python -m astramis_model.datasets.audit
-```
+![Автопилот на нашей модели в симуляторе](docs/media/polygon_autopilot.gif)
 
-The audit writes `references/data_audit.md` and `references/data_audit.json`. Labels are read only from `real_train.json` and `synth_train.json`. Test image RGB-D files and sensor metadata are checked for availability; test labels are not loaded.
+*Живой полигон: робот ездит на решениях нашей модели. Зелёное — модель решила забрать, красное — объехать.*
 
-There are 263 real training frames with 214 objects and 49 empty frames, 600 synthetic frames with 678 objects, and 137 real test frames. The real training set has 40 physical `object_id` values. Every one of these IDs also appears in synthetic training with the same form, material, volume, and mass. The grouped split therefore excludes synthetic frames containing any validation object.
+[Модуль объёма](#модуль-объёма) · [Полигон](#полигон) · [Запуск](#запуск) · [Модель](#архитектура-модели) · [Данные](#данные)
 
-## Architecture
+</div>
 
-- **RGB detector and segmenter:** pretrained YOLO11n-seg, fine-tuned on the selected real/synthetic training condition. The scorer consumes boxes; instance masks are retained for geometry and overlays.
-- **Object attribute model:** pretrained ResNet-18 image encoder, a floor-relative RGB-D geometry branch, and separate form, material, log-volume, log-mass, and take heads. Material loss uses training-set class weights; volume and mass use log targets with Smooth L1 loss.
-- **Late fusion:** joins the RGB embedding with handcrafted geometry features. **Intermediate fusion:** joins spatial depth/height features with the RGB feature map; `intermediate_geom` also adds the geometry vector.
-- **Geometry:** unprojects valid depth with `camera.json`, normalizes the per-frame `floor_plane`, estimates height above the floor, visible surface area, projected footprint, and a 4 mm cell height-sum volume. Invalid depth remains an explicit validity signal. Geometry is an observed-surface estimate, not true volume under occlusion.
-- **Mass and take:** the neural heads are supervised from training labels. RGB-D does not directly measure material density. The density table is used only in the baseline comparator.
+> Код полигона (`polygon/`) и модуля объёма (`volume/`, `geometry/volume_parts.py`) лежит в ветке
+> [`volume-parts`](https://github.com/Alexsam1075/Cleaner/tree/volume-parts). Навигация — `tools/nav.py`.
 
-The model uses YOLO11 and ResNet-18 pretrained weights rather than training a large vision network from scratch. The AION Lab run uses a dedicated Astramis project directory and its own Python environment; it does not modify AION checkpoints or running services.
+Для каждого предмета: форма, материал, объём и решение take. Метрика кейса:
+`Score = 100 · (0.40·D + 0.20·M + 0.25·V + 0.15·S)` — детекция и форма, материал, объём, решение take.
 
-## Grouped validation and experiments
+## Что в репозитории
 
-The default split is a deterministic four-fold `StratifiedGroupKFold` split over physical object IDs (seed 0, fold 1). It keeps all frames of each object on one side, includes all six materials in validation, and reserves a sample of empty frames for false-positive checks. Synthetic frames containing held-out object IDs are removed before pretraining or joint training.
+| Часть | Что делает | Где |
+|---|---|---|
+| Модель | YOLO11-seg детектор + ResNet-18 с RGB-D веткой (форма, материал, take) | `train.py`, `validate.py`, `predict.py`, `models/`, `training/` |
+| Модуль объёма | Объём и масса по глубине, маске, плоскости пола, форме и материалу | `volume/`, `geometry/volume_parts.py`, `docs/VOLUME.md` |
+| Навигация | Маршрут объезда по одному кадру, режим осторожности по массе | `tools/nav.py`, `tools/README_nav.md` |
+| Полигон | Свой рендер реального времени, генератор мусора, модель D435, цифровой робот | `polygon/` |
 
-The reproducible training matrix is:
+## Модуль объёма
 
-| Experiment | Detector data | Attribute data |
-| --- | --- | --- |
-| `A_real` | Real only | Real only |
-| `B_synth_then_real` | Synthetic pretraining, real fine-tuning | Synthetic pretraining, real fine-tuning |
-| `C_joint` | Joint real + synthetic | Joint real + synthetic |
-| `D_domain_randomized` | Joint data with stronger augmentation | Joint data with crop color randomization |
+Облако точек над полом → чистка шума по шуму пола (3σ) → карта высот 4 мм → невидимая сторона достраивается зеркально через гребень → предмет режется на части, на каждую подгоняется фигура (коробка, цилиндр, эллипсоид, купол) → несколько оценок объединяет поправка по форме и материалу в лог-шкале с изломами на 50 и 300 мл. Для стекла без глубины объём считается по отпечатку маски на полу с учётом высоты класса. Масса = объём × плотность класса.
 
-All conditions share the same object-ID split and model configuration. The default run also compares `rgb_only`, `late`, `intermediate`, and `intermediate_geom` heads with the joint training set; pass `--no-fusion-ablation` to skip that additional comparison. Validation uses the original, unchanged `score.py` and reports D, M, V, S, and Score. Error summaries include material, form, and volume ranges.
+![V по фолдам](docs/media/volume_by_fold.png)
 
-On AION Lab, create the isolated project environment once, then run the commands below from the project directory:
+| Проверка (официальный scorer, V) | Старая геометрия | Модуль, материал модели | Модуль, верный материал |
+|---|---:|---:|---:|
+| fold 1, маски детектора | 0.595 | 0.691 | 0.718 |
+| fold 2, маски детектора | 0.524 | 0.629 | 0.719 |
+| fold 3, маски детектора | 0.603 | 0.649 | 0.787 |
+| GT-маски, grouped CV по `object_id` (5×3) | 0.565 | — | 0.764 |
+
+Чем точнее материал на входе, тем точнее объём. Объём из модуля подставляется в любой submission:
 
 ```bash
-bash setup_aionlab.sh
-source .venv/bin/activate
-python train.py --data-root datasets/raw --device 0
-python validate.py --experiment C_joint --fusion intermediate_geom --visualize
-python validate.py --experiment A_real --fusion intermediate_geom
-python validate.py --experiment B_synth_then_real --fusion intermediate_geom
-python validate.py --experiment D_domain_randomized --fusion intermediate_geom
-python validate.py --experiment C_joint --fusion rgb_only
-python validate.py --experiment C_joint --fusion late
-python validate.py --experiment C_joint --fusion intermediate
-python evaluation/compare.py
-python predict.py --experiment C_joint --fusion intermediate_geom --visualize
+python -m volume.submission --submission in.csv --out out.csv --detector detector.pt \
+    --labels val_labels.json            # посчитать метрику; --oracle-material — потолок с верным материалом
 ```
 
-For a quicker smoke run, reduce `--epochs` and `--attribute-epochs`; such a run is a pipeline check, not a final model comparison. Model checkpoints and logs are written under `checkpoints/` and `logs/`. The generated test file is `submissions/submission.csv`, with the exact `image_id,prediction` columns and row order from `sample_submission.csv`.
+Из кода: `VolumeEstimator.load(...).estimate(depth, mask, plane, form, material)`. Подробности, честная валидация по фолдам и пересборка калибратора — в [`docs/VOLUME.md`](docs/VOLUME.md).
 
-## Reproducibility
+## Полигон
 
-- Fixed seed and saved object-ID split: `configs/object_id_split.json` (run copy: `logs/object_id_split.json`).
-- Each run stores model weights, configuration, training manifest, and JSONL epoch logs.
-- Test labels are never read. Validation labels are derived only from `real_train.json`.
-- `score.py` is copied to `references/` for remote use and is never edited.
-- `visualizations/` contains RGB overlays with predicted masks, boxes, labels, learned volume/mass, and observed geometric volume.
-- `requirements-aionlab.txt` pins the torchvision version matching the existing AION Lab PyTorch 2.9.1+cu128 environment. No credentials are stored in this project.
-- The raw dataset under `datasets/raw/` and uploaded `*.tar.gz` archives stay on AION Lab and are excluded from Git; restore them there from the provided dataset bundle when needed.
+### Рендер реального времени
 
-## Current status
+Весь кадр считается одним CUDA-ядром (`polygon/fastrt_kernel.cu`): один поток GPU — один пиксель. Сцена задаётся таблицей примитивов (SDF) и материалов; в ядре трассировка, GGX, мягкие тени, затенение в углах, отражения в глянцевой плитке, преломление в стекле, текстура пола с MIP. Ядро собирается во время запуска через NVRTC из пакета torch и запускается через CUDA driver API, отдельные зависимости не нужны.
 
-Data inventory and architecture code are in place. The final experiment table and score comparison are added to `DEVLOG.md` after the AION Lab training and held-out validation complete. A successful local build or a staged checkpoint alone is not reported as a quality improvement.
+![Материалы](docs/media/renderer_materials.jpg)
 
+| Сцена | Время кадра (V100, общий с другими задачами) |
+|---|---:|
+| Простая сцена 960×540 | 1.7 мс |
+| Робот и мусор 960×540, 2 сэмпла на пиксель | 15–30 мс |
+| Кадр датасета 1280×720 на реальном полу | 4.7 мс |
+
+### Цифровой робот
+
+Модель собрана по фотографиям: корпус с красной окантовкой и логотипом, чёрное основание, колёса со спицами (крутятся по одометрии, у каждой стороны своя), две щётки, D435 на высоте 0.25 м под наклоном 30°, лидар, планшет, кнопка остановки, съёмный бак.
+
+![Анимация робота](docs/media/robot_animation.gif)
+
+### Наша модель в симуляторе
+
+Кадр с камеры робота рендерится с интринсиками из `camera.json`, получает модель глубины D435 и `meta.json` с плоскостью пола — и идёт в тот же `predict_frame`, что и для сабмита. Автопилот держит память объектов в координатах пола, едет к тому, что модель назвала TAKE, объезжает AVOID и при пустом кадре прочёсывает полигон полосами. Счётчик наездов на по-настоящему тяжёлый мусор показывает, где модель ошибается.
+
+![Что видит модель](docs/media/model_view.gif)
+
+### Генератор обучающих кадров
+
+Процедурный мусор (бутылки, банки, коробки, бруски, камни, мятая бумага, россыпи) с известными материалом, точным объёмом, массой и take рендерится в настоящие пустые кадры пола из train. Свет восстанавливается по блику на плитке, яркость — по полу рядом с предметом. Глубина повторяет D435: шум растёт с z², летающие пиксели на краях, стереотень слева от предметов (база 50 мм), дыры на стекле и бликах металла, шаг 1 мм. Выход — в формате датасета (COCO + color/depth/meta). Кадры тест-сплита не используются.
+
+![Сравнение](docs/media/real_vs_synthetic.jpg)
+
+![RGB и глубина](docs/media/generator_rgbd.jpg)
+
+### Запуск
+
+```bash
+# живой полигон: на GPU-сервере, затем ssh -L 8790:localhost:8790 и http://localhost:8790
+python -m polygon.live --port 8790
+#   мышь — камера, W A S D — робот, P — автопилот по модели, V — что видит модель, G — истина, пробел — мусор
+
+python -m polygon.generate_fast --out polygon_data --n 2000 --seed 0     # обучающие кадры
+python -m polygon.animate_fast --out polygon_out/robot.mp4               # анимация робота
+python -m polygon.record --seconds 50 && python -m polygon.make_media    # медиа для README
+python -m pytest tests -q --import-mode=importlib                        # тесты
+```
+
+## Данные
+
+263 реальных кадра train (214 объектов, 49 пустых кадров), 600 синтетических кадров (678 объектов), 137 реальных кадров теста. В train всего 40 физических предметов (`object_id`), каждый есть и в синтетике с теми же атрибутами. Поэтому валидация только по группам `object_id`, а синтетика с предметами валидационного фолда выкидывается из обучения. Аудит данных: `python -m datasets.audit` → `references/data_audit.md`.
+
+## Архитектура модели
+
+- **Детектор и сегментация:** YOLO11n-seg, дообученный на выбранной конфигурации real/synth. Scorer берёт рамки, маски идут в геометрию.
+- **Атрибуты:** ResNet-18 + RGB-D ветка высоты над полом, отдельные головы формы, материала, take (и вспомогательные log-объём и log-масса). Варианты слияния: `rgb_only`, `late`, `intermediate`, `intermediate_geom`.
+- **Геометрия:** глубина разворачивается по `camera.json`, нормируется по `floor_plane` кадра; невалидная глубина остаётся явным признаком.
+
+| Эксперимент | Детектор | Атрибуты |
+|---|---|---|
+| `A_real` | только real | только real |
+| `B_synth_then_real` | предобучение на synth, дообучение на real | то же |
+| `C_joint` | real + synth вместе | то же |
+| `D_domain_randomized` | real + synth с сильной аугментацией | то же, с цветовой рандомизацией |
+
+```bash
+bash setup_aionlab.sh && source .venv/bin/activate
+python train.py --data-root datasets/raw --device 0
+python validate.py --experiment C_joint --fusion rgb_only
+python predict.py --experiment C_joint --fusion rgb_only --volume-backend parts \
+    --volume-calibrator checkpoints/volume_parts/calibrator.json
+```
+
+## Воспроизводимость
+
+- Фиксированный сид и сохранённое разбиение по `object_id`: `configs/object_id_split.json`, копия запуска — `logs/object_id_split.json`.
+- Метки теста не читаются никогда; валидационные метки берутся только из `real_train.json`; `score.py` не редактируется (копия в `references/`).
+- Датасет (`datasets/raw/`) и архивы `*.tar.gz` в git не входят.
+- Журнал экспериментов — `DEVLOG.md`, план по компонентам — `reports/ROADMAP_SCORE_100_2026-11-21.md`.
