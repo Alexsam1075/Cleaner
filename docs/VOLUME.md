@@ -86,5 +86,6 @@ json.dump(cal, open("cal_fold.json", "w"))
 - `geometry/volume_parts.py` — геометрия (чистка, части, фигуры, отпечаток)
 - `evaluation/volume_parts_cv.py` — калибратор и grouped CV
 - `inference/volume_backend.py` — плотности
-- `tests/` — 30 тестов: `~/venv/bin/python -m pytest tests -q`
+- `tests/` — тесты модуля: `~/venv/bin/python -m pytest tests -q --import-mode=importlib`
+  (в `~/Cleaner` 26 тестов; в ветке `volume-parts` ещё 4 на интеграцию в `predictor.py`)
 - Ветка с полной историей: `volume-parts` (worktree `~/CleanerVolume`)
