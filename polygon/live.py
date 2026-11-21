@@ -37,7 +37,7 @@ PAGE = """<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>По
 #v{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;cursor:grab;user-select:none}
 #h{position:fixed;left:14px;bottom:14px;background:rgba(18,20,22,.85);border:1px solid rgba(255,255,255,.1);
 border-radius:8px;padding:8px 12px;line-height:1.6}#h b{color:#fff}</style></head><body>
-<img id="v" src="/stream" draggable="false">
+<img id="v" src="/stream" draggable="false" tabindex="0">
 <div id="h"><b>Полигон Astramis</b> · свой рендер на GPU + наша модель (детектор, атрибуты, объём)<br>
 мышь — камера, колесо — зум, <b>W A S D</b> — робот, <b>P</b> — автопилот по модели, <b>V</b> — что видит модель,
 <b>G</b> — истина, <b>пробел</b> — мусор, <b>R</b> — сброс</div>
@@ -46,7 +46,7 @@ const keys={w:0,a:0,s:0,d:0};let orbit={daz:0,del:0,dz:0},drag=null,act=null;
 addEventListener('keydown',e=>{const k=e.key.toLowerCase();if(k in keys)keys[k]=1;
  if(k===' ')act='spawn';if(k==='r')act='reset';if(k==='v')act='view';if(k==='p')act='auto';if(k==='g')act='gt';});
 addEventListener('keyup',e=>{const k=e.key.toLowerCase();if(k in keys)keys[k]=0;});
-const v=document.getElementById('v');
+const v=document.getElementById('v');addEventListener('load',()=>{window.focus();v.focus()});
 v.addEventListener('mousedown',e=>{drag=[e.clientX,e.clientY];v.style.cursor='grabbing'});
 addEventListener('mouseup',()=>{drag=null;v.style.cursor='grab'});
 addEventListener('mousemove',e=>{if(!drag)return;orbit.daz-=(e.clientX-drag[0])*0.006;orbit.del+=(e.clientY-drag[1])*0.004;drag=[e.clientX,e.clientY]});
@@ -73,7 +73,7 @@ class Live:
         self.az, self.el, self.dist = math.pi + 0.6, 0.55, 2.2
         self.robot_view = False
         self.show_gt = False
-        self.auto = False
+        self.auto = True
         self.jpeg = None
         self.frame_ms = 0.0
         self.perc = perception
