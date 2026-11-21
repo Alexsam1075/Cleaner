@@ -14,6 +14,7 @@ from ..datasets.common import frame_id, load_coco
 from ..datasets.objects import MATERIALS, RGB_MEAN, RGB_STD, _rgb_crop
 from ..geometry.features import compute_geometry_features, geometry_input, load_camera, load_plane
 from ..training.attributes import load_attribute_model
+from .volume_backend import load_calibrator, load_densities, parts_volume_for_detection
 
 
 def _mask_for_detection(result: Any, index: int, height: int, width: int,
@@ -49,7 +50,13 @@ def predict_frame(image_path: str | Path, detector: YOLO,
                   attr_model: torch.nn.Module, checkpoint: dict[str, Any],
                   device: torch.device, camera: dict[str, Any],
                   conf: float = 0.08, imgsz: int = 640, max_det: int = 30,
-                  take_threshold_g: float = 500.0) -> list[dict[str, Any]]:
+                  take_threshold_g: float = 500.0, volume_backend: str = "net",
+                  volume_calibrator: dict | None = None,
+                  densities: dict | None = None) -> list[dict[str, Any]]:
+    if volume_backend not in ("net", "parts"):
+        raise ValueError(f"volume_backend must be 'net' or 'parts', got {volume_backend!r}")
+    if volume_backend == "parts" and (volume_calibrator is None or densities is None):
+        raise ValueError("volume_backend='parts' needs volume_calibrator and densities")
     image_path = Path(image_path)
     bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
     depth = cv2.imread(str(image_path.parent / "depth.png"), cv2.IMREAD_UNCHANGED)
@@ -96,6 +103,10 @@ def predict_frame(image_path: str | Path, detector: YOLO,
                                            posinf=np.log1p(5000.0), neginf=0.0))
             volume_ml = float(np.clip(np.expm1(np.clip(volume_log, 0.0, np.log1p(20000.0))), 1.0, 20000.0))
             mass_g = float(np.clip(np.expm1(np.clip(mass_log, 0.0, np.log1p(5000.0))), 1.0, 5000.0))
+            if volume_backend == "parts":
+                volume_ml, mass_g = parts_volume_for_detection(
+                    depth, mask, plane, camera, ["bulk", "solid"][form_idx], MATERIALS[material_idx],
+                    volume_calibrator, densities)
             take_prob = float(torch.sigmoid(output["take_logit"].float()).item())
             take = int(take_prob >= 0.5)
             # Keep the physical boundary visible in the output when the take head is uncertain.
@@ -135,13 +146,17 @@ def predict_ids(data_root: str | Path, image_ids: list[str], detector_weights: s
                 attribute_weights: str | Path, output_csv: str | Path,
                 conf: float = 0.08, imgsz: int = 640, device: str = "cuda:0",
                 take_threshold_g: float = 500.0, visualize_dir: str | Path | None = None,
-                max_visualizations: int = 20) -> Path:
+                max_visualizations: int = 20, volume_backend: str = "net",
+                volume_calibrator_path: str | Path | None = None,
+                densities_path: str | Path | None = None) -> Path:
     data_root = Path(data_root).resolve()
     output_csv = Path(output_csv)
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     attr_model, checkpoint, device_obj = load_attribute_model(attribute_weights, device)
     detector = YOLO(str(detector_weights))
     camera = load_camera(data_root / "camera.json")
+    calibrator = load_calibrator(volume_calibrator_path) if volume_calibrator_path else None
+    densities = load_densities(densities_path or data_root / "densities.csv") if volume_backend == "parts" else None
     rows = []
     visualized = 0
     for fid in image_ids:
@@ -150,7 +165,9 @@ def predict_ids(data_root: str | Path, image_ids: list[str], detector_weights: s
             # Validation calls can use real/train frames.
             path = data_root / "real" / "train" / fid / "color.png"
         predictions = predict_frame(path, detector, attr_model, checkpoint, device_obj,
-                                    camera, conf, imgsz, take_threshold_g=take_threshold_g)
+                                    camera, conf, imgsz, take_threshold_g=take_threshold_g,
+                                    volume_backend=volume_backend, volume_calibrator=calibrator,
+                                    densities=densities)
         rows.append({"image_id": fid, "prediction": prediction_cell(predictions)})
         if visualize_dir is not None and visualized < max_visualizations:
             from ..evaluation.visualize import save_overlay
