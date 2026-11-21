@@ -60,6 +60,9 @@ def main() -> None:
     ap.add_argument("--conf", type=float, default=0.08)
     ap.add_argument("--imgsz", type=int, default=640)
     ap.add_argument("--out", default="reports/volume_parts_fold2_noval18.json", type=Path)
+    ap.add_argument("--labels", default=None, type=Path, help="val_labels.json (default: under --run)")
+    ap.add_argument("--knots", default="", help="comma-separated ml knots, empty = none")
+    ap.add_argument("--material-noise", type=float, default=None)
     args = ap.parse_args()
     from ultralytics import YOLO
 
@@ -68,11 +71,14 @@ def main() -> None:
     val_ids = set(split["validation_object_ids"])
     assert not train_ids & val_ids
     rows = pd.read_csv(args.rows)
-    cal = fit_calibrator(rows[rows["object_id"].isin(train_ids)].reset_index(drop=True))
+    kw = {"knots_ml": tuple(float(k) for k in args.knots.split(",") if k)}
+    if args.material_noise is not None:
+        kw["material_noise"] = args.material_noise
+    cal = fit_calibrator(rows[rows["object_id"].isin(train_ids)].reset_index(drop=True), **kw)
     dens = load_densities(args.data / "densities.csv")
     camera = json.loads((args.data / "camera.json").read_text())
     detector = YOLO(str(args.run / "checkpoints/experiments/C_joint/detector.pt"))
-    labels = args.run / "logs/validation/C_joint/rgb_only/val_labels.json"
+    labels = args.labels or args.run / "logs/validation/C_joint/rgb_only/val_labels.json"
     val_frames = {Path(i["file_name"]).parent.name for i in json.loads(labels.read_text())["images"]}
 
     cand = pd.read_csv(args.candidate)

@@ -24,6 +24,14 @@ MATERIALS = ["glass", "metal", "mineral", "paper", "plastic", "wood"]
 EST_KEYS = ["columns_ml", "parts_ml", "hull_ml", "footprint_ml"]
 ALPHAS = [0.3, 1.0, 3.0, 10.0, 30.0]
 BINS = [(0, 50), (50, 200), (200, 1000), (1000, 1e9)]
+# Bends in log space: the raw estimate overshoots small objects and is close on large ones.
+# Grouped OOF (GT masks) V 0.715 -> 0.764; predicted masks/materials, folds 1/2/3:
+# 0.613/0.648/0.585 -> 0.691/0.629/0.649 (mean 0.615 -> 0.656).
+KNOTS_ML = (50.0, 300.0)
+# Optional share of training weight moved to wrong materials. Helps only against random material
+# errors (simulated), not against the real classifier's errors on folds 1-3 (mean V 0.619 vs
+# 0.656 with knots), so it is off by default.
+MATERIAL_NOISE = 0.0
 
 
 def volume_score(pred, true) -> float:
@@ -64,7 +72,7 @@ def _class_height(heights: dict, form: str, material: str) -> float:
 
 
 def _features(est: dict, form: str, material: str, heights: dict,
-              est_keys: list[str] = EST_KEYS) -> np.ndarray:
+              est_keys: list[str] = EST_KEYS, knots_ml=()) -> np.ndarray:
     vals = {k: float(est[k]) for k in est_keys}
     if int(est["n_parts"]) == 0:              # no usable depth: footprint x typical class height
         h = _class_height(heights, form, material)
@@ -79,7 +87,31 @@ def _features(est: dict, form: str, material: str, heights: dict,
     x += [float(form == f and material == m) for f in FORMS for m in MATERIALS]
     # class-specific slope on the main estimate lets each class rescale its own bias
     x += [main * float(material == m) for m in MATERIALS]
+    bent = [k for k in ("parts_ml", "columns_ml") if k in est_keys] or est_keys[:1]
+    for t in knots_ml:
+        x += [max(0.0, x[est_keys.index(k)] - math.log(t)) for k in bent]
     return np.asarray(x, dtype=np.float64)
+
+
+def _weighted_v(pred, true, w) -> float:
+    s = np.array([0.0 if p <= 0 or g <= 0 else max(0.0, 1.0 - abs(math.log(p / g)) / math.log(3.0))
+                  for p, g in zip(pred, true)])
+    return float(np.sum(s * w) / max(np.sum(w), 1e-12))
+
+
+def _with_material_noise(rows: pd.DataFrame, q: float) -> tuple[pd.DataFrame, np.ndarray]:
+    """Keep each row at weight 1-q and add copies with every other material sharing weight q."""
+    if q <= 0:
+        return rows, np.ones(len(rows))
+    out, w = [], []
+    for r in rows.to_dict("records"):
+        out.append(r)
+        w.append(1.0 - q)
+        others = [m for m in MATERIALS if m != r["material"]]
+        for m in others:
+            out.append({**r, "material": m})
+            w.append(q / len(others))
+    return pd.DataFrame(out), np.asarray(w)
 
 
 def _weights(object_ids) -> np.ndarray:
@@ -101,19 +133,22 @@ def _ridge(X: np.ndarray, y: np.ndarray, w: np.ndarray, alpha: float) -> tuple[n
     return coef, mu, sd, ym
 
 
-def _design(rows: pd.DataFrame, heights: dict, est_keys: list[str]) -> np.ndarray:
-    return np.vstack([_features(r, r["form"], r["material"], heights, est_keys)
+def _design(rows: pd.DataFrame, heights: dict, est_keys: list[str], knots_ml) -> np.ndarray:
+    return np.vstack([_features(r, r["form"], r["material"], heights, est_keys, knots_ml)
                       for r in rows.to_dict("records")])
 
 
 def fit_calibrator(rows: pd.DataFrame, alpha: float | None = None, inner_folds: int = 4,
-                   est_keys: list[str] | None = None) -> dict:
+                   est_keys: list[str] | None = None, knots_ml=KNOTS_ML,
+                   material_noise: float = MATERIAL_NOISE) -> dict:
     """Weighted ridge on log(volume); alpha chosen by inner grouped CV on these rows only."""
     est_keys = list(est_keys or EST_KEYS)
+    knots_ml = [float(t) for t in knots_ml]
     heights = _class_heights(rows)
-    X = _design(rows, heights, est_keys)
+    rows, noise_w = _with_material_noise(rows, float(material_noise))
+    X = _design(rows, heights, est_keys, knots_ml)
     y = np.log(rows["volume_ml"].to_numpy(dtype=float))
-    w = _weights(rows["object_id"])
+    w = _weights(rows["object_id"]) * noise_w
     if alpha is None:
         ids = rows["object_id"].to_numpy()
         n_inner = min(inner_folds, len(set(ids)))
@@ -123,17 +158,19 @@ def fit_calibrator(rows: pd.DataFrame, alpha: float | None = None, inner_folds: 
             for tr, va in group_folds(ids, n_inner, seed=123):
                 coef, mu, sd, ym = _ridge(X[tr], y[tr], w[tr], a)
                 pred[va] = ym + ((X[va] - mu) / sd) @ coef
-            s = volume_score(np.exp(pred), np.exp(y))
+            s = _weighted_v(np.exp(pred), np.exp(y), noise_w)
             if best is None or s > best[0]:
                 best = (s, a)
         alpha = best[1]
     coef, mu, sd, ym = _ridge(X, y, w, alpha)
     return {"alpha": float(alpha), "coef": coef.tolist(), "mu": mu.tolist(), "sd": sd.tolist(),
-            "intercept": ym, "class_heights": heights, "n_features": int(X.shape[1]), "est_keys": est_keys}
+            "intercept": ym, "class_heights": heights, "n_features": int(X.shape[1]), "est_keys": est_keys,
+            "knots_ml": knots_ml, "material_noise": float(material_noise)}
 
 
 def apply_calibrator(cal: dict, est: dict, form: str, material: str) -> float:
-    x = _features(est, form, material, cal["class_heights"], cal.get("est_keys", EST_KEYS))
+    x = _features(est, form, material, cal["class_heights"], cal.get("est_keys", EST_KEYS),
+                  cal.get("knots_ml", []))
     z = (x - np.asarray(cal["mu"])) / np.asarray(cal["sd"])
     return float(np.clip(math.exp(cal["intercept"] + float(z @ np.asarray(cal["coef"]))), 1.0, 20000.0))
 
@@ -187,7 +224,9 @@ def _breakdown(df: pd.DataFrame, pred_col: str) -> dict:
 
 
 def oof_predictions(real: pd.DataFrame, synth: pd.DataFrame | None, n_folds: int, seed: int,
-                    est_keys: list[str] | None = None) -> np.ndarray:
+                    est_keys: list[str] | None = None, wrong_material: float = 0.0) -> np.ndarray:
+    """OOF volumes; ``wrong_material`` replaces the input material by a random wrong one."""
+    rng = np.random.default_rng(1000 + seed)
     pred = np.zeros(len(real))
     for tr, va in group_folds(real["object_id"].to_numpy(), n_folds, seed):
         train = real.iloc[tr]
@@ -196,7 +235,10 @@ def oof_predictions(real: pd.DataFrame, synth: pd.DataFrame | None, n_folds: int
             train = pd.concat([train, synth[synth["object_id"].isin(allowed)]], ignore_index=True)
         cal = fit_calibrator(train, est_keys=est_keys)
         val = real.iloc[va]
-        pred[va] = [apply_calibrator(cal, r, r["form"], r["material"]) for r in val.to_dict("records")]
+        recs = val.to_dict("records")
+        mats = [r["material"] if rng.random() >= wrong_material else
+                str(rng.choice([m for m in MATERIALS if m != r["material"]])) for r in recs]
+        pred[va] = [apply_calibrator(cal, r, r["form"], m) for r, m in zip(recs, mats)]
     return pred
 
 
@@ -233,6 +275,9 @@ def main() -> None:
     old = [volume_score(oof_predictions(real, synth, args.folds, s, ["old_geom_ml"]), real["volume_ml"])
            for s in range(args.seeds)]
     report["calibrated_old_geom_V_mean"], report["calibrated_old_geom_V_std"] = float(np.mean(old)), float(np.std(old))
+    noisy = [volume_score(oof_predictions(real, synth, args.folds, s, wrong_material=0.5), real["volume_ml"])
+             for s in range(args.seeds)]
+    report["calibrated_wrong_material50_V_mean"] = float(np.mean(noisy))
     vs = [c["V"] for c in report["calibrated"]]
     report["calibrated_V_mean"], report["calibrated_V_std"] = float(np.mean(vs)), float(np.std(vs))
 
@@ -241,6 +286,7 @@ def main() -> None:
         print(f"raw {col:13s} V={r['V']:.4f}")
     print(f"calibrated OLD geometry OOF V={report['calibrated_old_geom_V_mean']:.4f} ± {report['calibrated_old_geom_V_std']:.4f}")
     print(f"calibrated OOF V={report['calibrated_V_mean']:.4f} ± {report['calibrated_V_std']:.4f}")
+    print(f"calibrated OOF V with 50% wrong input materials={report['calibrated_wrong_material50_V_mean']:.4f}")
     print("by bin (seed 0):", {k: round(v, 3) for k, v in report["calibrated"][0]["by_bin"].items()})
     print("by class (seed 0):", {k: round(v, 3) for k, v in report["calibrated"][0]["by_class"].items()})
 

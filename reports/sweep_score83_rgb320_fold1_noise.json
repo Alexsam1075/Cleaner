@@ -1,0 +1,41 @@
+{
+  "run": "/home/cleaner/Cleaner/checkpoints/score83_rgb320_fold1",
+  "candidate": "/home/cleaner/Cleaner/checkpoints/score83_rgb320_fold1/logs/score83_candidates/C_joint/rgb_only/geometry_none_train_density_take_500g.csv",
+  "train_objects": 30,
+  "validation_objects": [
+    "b03",
+    "b10",
+    "b16",
+    "s11",
+    "s16",
+    "s18",
+    "s38",
+    "s45",
+    "s47",
+    "s48"
+  ],
+  "matched_masks": 59,
+  "box_fallback": 0,
+  "calibrator_alpha": 0.3,
+  "baseline": {
+    "D": 0.9706122448979592,
+    "M": 0.5425000000000001,
+    "V": 0.5949857434543444,
+    "S": 0.59375,
+    "Score": 73.45538338227699
+  },
+  "parts_volume": {
+    "D": 0.9706122448979592,
+    "M": 0.5425000000000001,
+    "V": 0.6303675936047982,
+    "S": 0.59375,
+    "Score": 74.33992963603833
+  },
+  "parts_volume_mass_take": {
+    "D": 0.9706122448979592,
+    "M": 0.5425000000000001,
+    "V": 0.6303675936047982,
+    "S": 0.59375,
+    "Score": 74.33992963603833
+  }
+}

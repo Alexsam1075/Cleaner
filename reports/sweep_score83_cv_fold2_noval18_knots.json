@@ -1,0 +1,41 @@
+{
+  "run": "/home/cleaner/Cleaner/checkpoints/score83_cv_fold2_noval18",
+  "candidate": "/home/cleaner/Cleaner/checkpoints/score83_cv_fold2_noval18/logs/score83_candidates/C_joint/rgb_only/geometry_form_material_train_oof_volume_429.13ml.csv",
+  "train_objects": 30,
+  "validation_objects": [
+    "b06",
+    "b13",
+    "b15",
+    "b21",
+    "s01",
+    "s02",
+    "s32",
+    "s35",
+    "s36",
+    "s42"
+  ],
+  "matched_masks": 64,
+  "box_fallback": 0,
+  "calibrator_alpha": 3.0,
+  "baseline": {
+    "D": 0.8282487828767321,
+    "M": 0.6319444444444445,
+    "V": 0.5242039755408542,
+    "S": 0.8999999999999999,
+    "Score": 72.37393959247953
+  },
+  "parts_volume": {
+    "D": 0.8282487828767321,
+    "M": 0.6319444444444445,
+    "V": 0.6293080604006831,
+    "S": 0.8999999999999999,
+    "Score": 75.00154171397526
+  },
+  "parts_volume_mass_take": {
+    "D": 0.8282487828767321,
+    "M": 0.6319444444444445,
+    "V": 0.6293080604006831,
+    "S": 0.76,
+    "Score": 72.90154171397525
+  }
+}
