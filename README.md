@@ -2,6 +2,12 @@
 
 This directory contains an independent first-pass detector and object attribute pipeline. The original `baseline.ipynb`, `score.py`, label files, and source images remain untouched.
 
+## Project deliverables
+
+- [Final submission CSV](deliverables/submission_best.csv) — predictions for 137 test frames.
+- [LiveCliner presentation](deliverables/LiveCliner.pptx) — project slides in PowerPoint format.
+
+
 ## Data findings
 
 Run the audit from the workspace root (or `python -m datasets.audit` from this project directory):
