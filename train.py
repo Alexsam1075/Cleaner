@@ -52,6 +52,8 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=None)
     parser.add_argument("--device", default=None)
     parser.add_argument("--skip-detector", action="store_true")
+    parser.add_argument("--no-detector-validation", action="store_true",
+                        help="Train detector for all requested epochs and select last.pt without outer-fold checkpoint selection.")
     parser.add_argument("--detector-model", default=None)
     args = parser.parse_args()
 
@@ -129,7 +131,8 @@ def main() -> None:
                            "synth_attribute_pretrain_epochs": run_synth_attribute_epochs,
                            "detector_batch": run_detector_batch,
                            "attribute_batch": run_attribute_batch,
-                           "fusion": fusion, "device": device}
+                           "fusion": fusion, "device": device,
+                           "detector_validation_enabled": not args.no_detector_validation}
         (log_dir / "resolved_config.json").write_text(json.dumps(resolved_config, indent=2), encoding="utf-8")
         detector_path = exp_dir / "detector.pt"
         if not args.skip_detector:
@@ -139,7 +142,8 @@ def main() -> None:
                 batch=run_detector_batch, workers=workers, device=device, seed=run_seed,
                 strategy=run_config["detector_strategy"],
                 domain_randomized=bool(run_config.get("domain_randomized", False)),
-                synth_pretrain_epochs=run_synth_epochs)
+                synth_pretrain_epochs=run_synth_epochs,
+                validate=not args.no_detector_validation)
             detector_path.parent.mkdir(parents=True, exist_ok=True)
             detector_path.write_bytes(trained_detector.read_bytes())
         elif not detector_path.is_file():

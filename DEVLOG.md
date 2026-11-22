@@ -96,3 +96,14 @@ At the time of this initial implementation entry, no model result was available.
 - The best observed model has S=0.3542, so `take` remains a weak area. The visible-depth volume estimate cannot recover hidden surfaces, and mass error is supplementary because the scorer evaluates `take`, not mass directly.
 - Keep D as the current submission candidate, but compare it on additional object-ID folds and inspect take errors by mass range before allowing autonomous pickup decisions.
 
+## 2026-11-21 - split integrity repair and roadmap to 100
+
+An attempted fold-2 run was scored on fold 1 because the old remote validator regenerated the saved split with its default fold. The resulting 97.363 was invalid: all 10 reported validation IDs were in training. Its report and submissions are preserved under invalid_fold1_before_split_fix/ and must not be used as a result.
+
+Fixed remote validate.py to load the training-log split, report its source, reject overlapping train/validation IDs, and verify detector and attribute training IDs. Added --no-detector-validation so training runs a fixed number of epochs and selects last.pt instead of using outer-fold mAP to select best.pt.
+
+The clean C RGB-only 18-epoch fold-2 run scored 64.519 before postprocessing. A threshold fitted only from grouped OOF training-object geometry changed volume/take and reached 71.605 (D=.8282, M=.6319, V=.4934, S=.9000). detector.pt SHA-256 matches last.pt; the saved train and validation IDs are disjoint. Fold 2 has been used for exploratory analysis, so this is not an untouched final holdout.
+
+The component roadmap is in reports/ROADMAP_SCORE_100_2026-11-21.md. Current largest gaps are volume (12.66 score points to perfect on this fold), material (7.36), and detection/form (6.87). The dataset has only 40 physical object IDs; more independently labeled objects, especially rare materials and heavy items, are required to support a credible 100-point claim.
+Correction to the fold-2 entry above: applying the train-only form/material volume scale while keeping the same grouped-OOF take threshold scored 72.374 (D=.8282, M=.6319, V=.5242, S=.9000), a +0.769-point development-fold ablation. This must be verified on another object-ID fold before promotion. Details: reports/score83_fold2_noval18_calibrated_volume_oof_take.json.
+Restored the earlier fold-1 80.974 candidate unchanged and rescored it with the official references/score.py: D=.9714, M=.7067, V=.6068, S=.8542. Candidate: reports/score80_candidate_fold1.csv; SHA-256 and split are in reports/score80_candidate_fold1.json. Keep it separate from new architecture runs; it is a development score, not a blind estimate.

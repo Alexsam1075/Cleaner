@@ -1,0 +1,6 @@
+path: /home/alexsandrdev/Projects/Cleaner/audit/final/yolo_big_f2
+train: images/train
+val: images/train
+names:
+  0: bulk
+  1: solid

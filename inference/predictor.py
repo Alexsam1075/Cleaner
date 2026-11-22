@@ -135,13 +135,29 @@ def predict_ids(data_root: str | Path, image_ids: list[str], detector_weights: s
                 attribute_weights: str | Path, output_csv: str | Path,
                 conf: float = 0.08, imgsz: int = 640, device: str = "cuda:0",
                 take_threshold_g: float = 500.0, visualize_dir: str | Path | None = None,
-                max_visualizations: int = 20) -> Path:
+                max_visualizations: int = 20, classification_checkpoint: str | Path | None = None,
+                classification_tasks: tuple[str, ...] = ("material",),
+                classification_blend: float = 1.0,
+                classification_form_blend: float = 1.0,
+                material_glare_metal_override: bool = False) -> Path:
     data_root = Path(data_root).resolve()
     output_csv = Path(output_csv)
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     attr_model, checkpoint, device_obj = load_attribute_model(attribute_weights, device)
     detector = YOLO(str(detector_weights))
     camera = load_camera(data_root / "camera.json")
+    classifier = None
+    classifier_checkpoint = None
+    if classification_checkpoint is not None:
+        from .classification import reclassify_predictions
+        from ..training.classification import load_form_material_classifier
+        classifier, classifier_checkpoint, classifier_device = load_form_material_classifier(
+            classification_checkpoint, device
+        )
+        if classifier_device != device_obj:
+            raise ValueError("Classifier and attribute model must use the same inference device")
+    else:
+        reclassify_predictions = None
     rows = []
     visualized = 0
     for fid in image_ids:
@@ -151,6 +167,15 @@ def predict_ids(data_root: str | Path, image_ids: list[str], detector_weights: s
             path = data_root / "real" / "train" / fid / "color.png"
         predictions = predict_frame(path, detector, attr_model, checkpoint, device_obj,
                                     camera, conf, imgsz, take_threshold_g=take_threshold_g)
+        if reclassify_predictions is not None:
+            predictions = reclassify_predictions(path, predictions, classifier,
+                                                 classifier_checkpoint, camera, device_obj,
+                                                 tasks=classification_tasks,
+                                                 material_blend=classification_blend,
+                                                 form_blend=classification_form_blend)
+        if material_glare_metal_override:
+            from .material_reflectance import apply_reflective_metal_override
+            predictions = apply_reflective_metal_override(path, predictions)
         rows.append({"image_id": fid, "prediction": prediction_cell(predictions)})
         if visualize_dir is not None and visualized < max_visualizations:
             from ..evaluation.visualize import save_overlay
