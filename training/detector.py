@@ -51,7 +51,7 @@ def _train_part(model: YOLO, data_yaml: Path, project_dir: Path, name: str,
     save_dir = project_dir / name
     best = save_dir / "weights" / "best.pt"
     last = save_dir / "weights" / "last.pt"
-    return best if best.is_file() else last
+    return best if validate and best.is_file() else last
 
 
 def train_detector(data_root: str | Path, split: dict[str, Any],
@@ -61,7 +61,8 @@ def train_detector(data_root: str | Path, split: dict[str, Any],
                    device: str | int = 0, seed: int = 0,
                    strategy: str | None = None,
                    domain_randomized: bool | None = None,
-                   synth_pretrain_epochs: int | None = None) -> Path:
+                   synth_pretrain_epochs: int | None = None,
+                   validate: bool = True) -> Path:
     output_root = Path(output_root).resolve()
     data_root = Path(data_root).resolve()
     exp_dir = output_root / "detector" / experiment
@@ -73,7 +74,7 @@ def train_detector(data_root: str | Path, split: dict[str, Any],
         yaml_path = prepare_yolo_dataset(data_root, split, exp_dir / "data_real",
                                         train_real=True, train_synth=False)
         weight = _train_part(YOLO(model_name), yaml_path, exp_dir, "real_only",
-                             epochs, image_size, batch, workers, device, True, False, seed)
+                             epochs, image_size, batch, workers, device, validate, False, seed)
     elif strategy in {"B_synth_then_real", "synth_pretrain_real_finetune"}:
         synth_yaml = prepare_yolo_dataset(data_root, split, exp_dir / "data_synth",
                                           train_real=False, train_synth=True, validation=False)
@@ -86,7 +87,7 @@ def train_detector(data_root: str | Path, split: dict[str, Any],
                                          train_real=True, train_synth=False)
         finetuned = YOLO(str(synth_weight))
         weight = _train_part(finetuned, real_yaml, exp_dir, "real_finetune",
-                             epochs, image_size, batch, workers, device, True, False, seed)
+                             epochs, image_size, batch, workers, device, validate, False, seed)
     elif strategy in {"C_joint", "D_domain_randomized", "joint", "joint_domain_randomized"}:
         if strategy == "joint_domain_randomized":
             randomized = True
@@ -94,11 +95,13 @@ def train_detector(data_root: str | Path, split: dict[str, Any],
                                         train_real=True, train_synth=True)
         model = YOLO(model_name)
         weight = _train_part(model, yaml_path, exp_dir, "joint", epochs, image_size,
-                             batch, workers, device, True, randomized, seed)
+                             batch, workers, device, validate, randomized, seed)
     else:
         raise ValueError(f"Unknown experiment: {experiment}")
     meta = {"experiment": experiment, "weights": str(weight), "seed": int(seed),
             "epochs_requested": epochs, "image_size": image_size,
+            "validation_enabled": bool(validate),
+            "checkpoint_selection": "best_on_validation" if validate else "last_fixed_epochs",
             "train_object_ids": split["train_object_ids"],
             "validation_object_ids": split["validation_object_ids"],
             "train_synth_frames": len(split["train_synth_frames"])}
