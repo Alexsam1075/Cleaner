@@ -5,7 +5,7 @@ This directory contains an independent first-pass detector and object attribute 
 ## Project deliverables
 
 - [Final submission CSV](deliverables/submission_best.csv) — predictions for 137 test frames.
-- [LiveCliner presentation](deliverables/LiveCliner.pptx) — project slides in PowerPoint format.
+- [AI B2B SaaShka](deliverables/AI%20B2B%20SaaShka.pptx) — project slides in PowerPoint format.
 
 
 ## Data findings
