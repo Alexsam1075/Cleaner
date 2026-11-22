@@ -23,7 +23,7 @@
 ## Материалы проекта
 
 - [Итоговый CSV](deliverables/submission_best.csv) с предсказаниями для 137 тестовых кадров.
-- [Презентация AI B2B SaaShka](deliverables/AI%20B2B%20SaaShka.pptx) в формате PowerPoint.
+- [Презентация AI B2B SaaShka](deliverables/AI%20B2B%20SaaShka.pdf) в формате PDF.
 
 
 ## Что в репозитории
