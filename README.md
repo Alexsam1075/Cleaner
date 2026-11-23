@@ -135,3 +135,7 @@ python predict.py --experiment C_joint --fusion rgb_only --volume-backend parts 
 - Метки теста не читаются никогда; валидационные метки берутся только из `real_train.json`; `score.py` не редактируется (копия в `references/`).
 - Датасет (`datasets/raw/`) и архивы `*.tar.gz` в git не входят.
 - Журнал экспериментов — `DEVLOG.md`, план по компонентам — `reports/ROADMAP_SCORE_100_2026-11-21.md`.
+
+
+#Результаты хакатона:
+проигрыш...
