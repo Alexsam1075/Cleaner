@@ -137,5 +137,5 @@ python predict.py --experiment C_joint --fusion rgb_only --volume-backend parts 
 - Журнал экспериментов — `DEVLOG.md`, план по компонентам — `reports/ROADMAP_SCORE_100_2026-11-21.md`.
 
 
-#Результаты хакатона:
+# Результаты хакатона:
 проигрыш...
