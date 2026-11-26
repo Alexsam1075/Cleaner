@@ -1,0 +1,4 @@
+stage,fold_1,fold_2,fold_3,fold_4,mean_4_folds
+Base,88.31,85.04,83.17,60.22,79.19
+Material v2,91.24,85.04,81.77,70.87,82.23
+Form v2 + series pooling,88.98,89.98,89.60,73.35,85.48

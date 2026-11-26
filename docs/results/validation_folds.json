@@ -1,0 +1,21 @@
+{
+  "type": "line",
+  "seed": 20261126,
+  "width": 960,
+  "height": 560,
+  "title": "Object-ID score на четырёх фолдах",
+  "scale": true,
+  "xLabel": "Этап модели",
+  "yLabel": "Score",
+  "yMin": 55,
+  "yMax": 100,
+  "yTicks": 5,
+  "x": ["Базовый", "Материал v2", "Форма v2 + pooling"],
+  "series": [
+    { "name": "Фолд 1", "color": "#3a9bf2", "marker": "circle", "values": [88.31, 91.24, 88.98] },
+    { "name": "Фолд 2", "color": "#a43ce6", "marker": "square", "values": [85.04, 85.04, 89.98] },
+    { "name": "Фолд 3", "color": "#6ee858", "marker": "triangle", "values": [83.17, 81.77, 89.60] },
+    { "name": "Фолд 4", "color": "#de0d29", "marker": "cross", "values": [60.22, 70.87, 73.35] },
+    { "name": "Среднее по 4 фолдам", "color": "#f2623a", "marker": "star", "values": [79.19, 82.23, 85.48] }
+  ]
+}
