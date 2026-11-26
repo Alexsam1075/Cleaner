@@ -1,0 +1,73 @@
+{
+  "type": "line",
+  "seed": 20261126,
+  "width": 560,
+  "height": 410,
+  "title": "Score \u043f\u043e \u0444\u043e\u043b\u0434\u0430\u043c",
+  "scale": true,
+  "yLabel": "Score",
+  "yMin": 55,
+  "yMax": 100,
+  "yTicks": 5,
+  "x": [
+    "\u0411\u0430\u0437\u043e\u0432\u044b\u0439",
+    "\u041c\u0430\u0442\u0435\u0440\u0438\u0430\u043b v2",
+    "\u0424\u043e\u0440\u043c\u0430 + \u0441\u0435\u0440\u0438\u044f"
+  ],
+  "series": [
+    {
+      "name": "\u0424\u043e\u043b\u0434 1",
+      "marker": "circle",
+      "values": [
+        88.31,
+        91.24,
+        88.98
+      ],
+      "color": "#0969da"
+    },
+    {
+      "name": "\u0424\u043e\u043b\u0434 2",
+      "marker": "square",
+      "values": [
+        85.04,
+        85.04,
+        89.98
+      ],
+      "color": "#8250df"
+    },
+    {
+      "name": "\u0424\u043e\u043b\u0434 3",
+      "marker": "triangle",
+      "values": [
+        83.17,
+        81.77,
+        89.6
+      ],
+      "color": "#1a7f37"
+    },
+    {
+      "name": "\u0424\u043e\u043b\u0434 4",
+      "marker": "cross",
+      "values": [
+        60.22,
+        70.87,
+        73.35
+      ],
+      "color": "#cf222e"
+    },
+    {
+      "name": "\u0421\u0440\u0435\u0434\u043d\u0435\u0435",
+      "marker": "star",
+      "values": [
+        79.19,
+        82.23,
+        85.48
+      ],
+      "color": "#bf4b00"
+    }
+  ],
+  "ink": "#24292f",
+  "titleColor": "#24292f",
+  "mutedColor": "#57606a",
+  "titleSize": 46
+}

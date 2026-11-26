@@ -39,13 +39,21 @@
 
 Для последней строки scoreboard сообщает **D=0.905, M=0.906, V=0.767, S=0.799**.
 
-![Изменение Score на четырёх object-ID фолдах](docs/media/server_validation_folds.svg)
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Alexsam1075/Cleaner/main/docs/media/server_validation_folds_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Alexsam1075/Cleaner/main/docs/media/server_validation_folds_light.svg">
+  <img src="https://raw.githubusercontent.com/Alexsam1075/Cleaner/main/docs/media/server_validation_folds_light.svg" width="560" alt="Score по четырём object-ID фолдам">
+</picture>
+</div>
 
-![D, M, V, S и итоговый Score](docs/media/server_validation_components.svg)
-
-Графики созданы существующим модулем handdrawn-charts.js. Доступны версии PNG для слайдов: [оценки по фолдам](docs/media/server_validation_folds.png) и [метрики](docs/media/server_validation_components.png). Исходные данные и конфигурации: [фолды CSV](docs/results/validation_folds.csv), [фолды JSON](docs/results/validation_folds.json), [метрики CSV](docs/results/validation_metrics.csv), [метрики JSON](docs/results/validation_metrics.json).
-
-Полный снимок источников, дата проверки и ограничения интерпретации описаны в [результатах сервера](docs/RESULTS_2026-11-26.md).
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Alexsam1075/Cleaner/main/docs/media/server_validation_components_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Alexsam1075/Cleaner/main/docs/media/server_validation_components_light.svg">
+  <img src="https://raw.githubusercontent.com/Alexsam1075/Cleaner/main/docs/media/server_validation_components_light.svg" width="560" alt="Метрики D, M, V, S и итоговый Score">
+</picture>
+</div>
 
 ## Что в репозитории
 
@@ -60,7 +68,13 @@
 
 Облако точек над полом → чистка шума по шуму пола (3σ) → карта высот 4 мм → невидимая сторона достраивается зеркально через гребень → предмет режется на части, на каждую подгоняется фигура (коробка, цилиндр, эллипсоид, купол) → несколько оценок объединяет поправка по форме и материалу в лог-шкале с изломами на 50 и 300 мл. Для стекла без глубины объём считается по отпечатку маски на полу с учётом высоты класса. Масса = объём × плотность класса.
 
-![V по фолдам](docs/media/volume_by_fold.png)
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Alexsam1075/Cleaner/main/docs/media/volume_folds_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Alexsam1075/Cleaner/main/docs/media/volume_folds_light.svg">
+  <img src="https://raw.githubusercontent.com/Alexsam1075/Cleaner/main/docs/media/volume_folds_light.svg" width="560" alt="Оценка объёма по фолдам: геометрия и варианты материала">
+</picture>
+</div>
 
 | Проверка (официальный scorer, V) | Старая геометрия | Модуль, материал модели | Модуль, верный материал |
 |---|---:|---:|---:|
