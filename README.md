@@ -1,6 +1,6 @@
 <div align="center">
 
-# Cleaner — что под щёткой
+# LiveCleaner
 
 **Робот-уборщик Astramis: по одному кадру RGB-D находит мусор и решает, что забрать, а что объехать**
 
@@ -36,8 +36,6 @@
 | Базовый | 88.31 | 85.04 | 83.17 | 60.22 | 79.19 |
 | Материал v2 | 91.24 | 85.04 | 81.77 | 70.87 | 82.23 |
 | Форма v2 + объединение серии | 88.98 | 89.98 | 89.60 | 73.35 | **85.48** |
-
-Для последней строки scoreboard сообщает **D=0.905, M=0.906, V=0.767, S=0.799**.
 
 <div align="center">
 <picture>
@@ -163,11 +161,4 @@ python validate.py --experiment C_joint --fusion rgb_only
 python predict.py --experiment C_joint --fusion rgb_only --volume-backend parts \
     --volume-calibrator checkpoints/volume_parts/calibrator.json
 ```
-
-## Воспроизводимость
-
-- Фиксированный сид и сохранённое разбиение по `object_id`: `configs/object_id_split.json`, копия запуска — `logs/object_id_split.json`.
-- Метки теста не читаются никогда; валидационные метки берутся только из `real_train.json`; `score.py` не редактируется (копия в `references/`).
-- Датасет (`datasets/raw/`) и архивы `*.tar.gz` в git не входят.
-- Журнал экспериментов — `DEVLOG.md`, план по компонентам — `reports/ROADMAP_SCORE_100_2026-11-21.md`.
 
